@@ -27,7 +27,9 @@ class Settings:
         default_factory=lambda: _env_int("COMANDA_AUTO_REFUND_LIMIT_CENTS", 8000)
     )
     # Modelos por papel. Aliases aceitos pelo Claude Agent SDK: "haiku", "sonnet", "opus".
-    triage_model: str = field(default_factory=lambda: os.getenv("COMANDA_TRIAGE_MODEL", "haiku"))
+    reception_model: str = field(
+        default_factory=lambda: os.getenv("COMANDA_RECEPTION_MODEL", "haiku")
+    )
     specialist_model: str = field(
         default_factory=lambda: os.getenv("COMANDA_SPECIALIST_MODEL", "sonnet")
     )

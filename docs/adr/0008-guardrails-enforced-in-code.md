@@ -1,0 +1,3 @@
+# Guardrails aplicados em código, não em prompt
+
+O prompt orienta os agentes, mas nunca é a última linha de defesa. Três guardrails são aplicados em código: o cliente do atendimento é fixo no contexto das ferramentas, que não aceitam `customer_id` e recusam pedidos de outro cliente; um hook `PreToolUse` nega `issue_refund` quando não houve `check_refund_eligibility` para o mesmo pedido no mesmo atendimento; e nome, telefone e endereço do cliente são mascarados no momento da gravação do rastro, então nem o rastro local nem o painel ao vivo guardam o dado real. Como `issue_refund` já recalcula a regra (ADR-0001), o hook não protege o valor, e sim o processo: cada bloqueio fica no rastro e conta como violação na avaliação, o que torna visível um agente que pula etapas.

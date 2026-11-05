@@ -1,0 +1,3 @@
+# Rastro em JSONL próprio, um arquivo por atendimento
+
+Cada atendimento grava um arquivo JSONL com um evento por linha (mensagem do cliente, resposta do agente, delegação a subagente, chamada e resultado de ferramenta, bloqueio de guardrail, tokens e custo), com esquema versionado por um campo `v`. O mesmo formato alimenta o SSE ao vivo do painel (ADR-0005), o replay estático (ADR-0002) e as métricas da avaliação, então há uma fonte só de verdade sobre o que aconteceu. OpenTelemetry foi descartado: exigiria coletor e ferramenta de visualização para mostrar o que o painel já mostra, e um esquema próprio é mais fácil de explicar e de transformar em replay.

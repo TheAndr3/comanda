@@ -12,6 +12,16 @@ _Avoid_: usuário, consumidor, comprador
 Pessoa da operação que decide os reembolsos pendentes e recebe os tickets.
 _Avoid_: operador, suporte, moderador
 
+## Agentes
+
+**Recepção** (`reception`):
+O agente que conversa com o cliente, entende o problema e delega aos especialistas.
+_Avoid_: agente de atendimento, triagem, orquestrador
+
+**Especialista** (`specialist`):
+Agente que resolve uma parte do caso para a Recepção e nunca fala com o cliente; há dois: Pedidos e Reembolsos.
+_Avoid_: subagente, worker
+
 ## Pedidos
 
 **Pedido** (`Order`):
@@ -64,6 +74,14 @@ _Avoid_: chamado, protocolo
 O ato de abrir um ticket e passar o caso a um atendente humano.
 _Avoid_: transferência, handoff
 
+**Fila** (`queue`):
+Os reembolsos pendentes e os tickets abertos que aguardam um atendente humano.
+_Avoid_: backlog, caixa de entrada, pendências
+
+**Guardrail** (`guardrail`):
+Limite aplicado fora do modelo que impede um agente de agir fora do processo, seja qual for o pedido do cliente.
+_Avoid_: trava, filtro, proteção
+
 **Rastro** (`trace`):
 O registro, em ordem, de cada passo de um atendimento: qual agente agiu, qual ferramenta chamou, com que dados e resultado.
 _Avoid_: log, histórico
@@ -81,6 +99,10 @@ _Avoid_: usuário simulado, bot de teste
 **Juiz** (`judge`):
 Modelo de linguagem que avalia o que o sistema disse ao cliente; o resultado no banco é conferido por código.
 _Avoid_: avaliador, grader
+
+**Violação** (`violation`):
+Algo que o sistema disse ou tentou fazer contra a política ou contra um guardrail durante um atendimento.
+_Avoid_: erro, falha, infração
 
 **Painel** (`web`):
 Interface web que mostra o atendimento ao lado do rastro.
