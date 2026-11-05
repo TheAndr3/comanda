@@ -1,0 +1,33 @@
+name: Bug
+description: Algo no Comanda se comporta diferente do esperado.
+labels: ["needs-triage"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: O que aconteceu
+      description: Descreva o comportamento observado. Inclua o id do atendimento ou o trecho do Rastro, se houver.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: O que era esperado
+      description: Cite a regra, a política ou o ADR que define o comportamento correto, se souber.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Como reproduzir
+      description: Comandos, Cliente do seed (por exemplo, C001) e falas usadas.
+      placeholder: |
+        1. uv run ...
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit ou versão
+      placeholder: ca02b72

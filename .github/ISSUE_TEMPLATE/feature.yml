@@ -1,0 +1,26 @@
+name: Funcionalidade
+description: Uma fatia vertical nova, no formato dos tickets do PRD.
+labels: ["needs-triage"]
+body:
+  - type: input
+    id: parent
+    attributes:
+      label: Parent
+      description: Issue mãe (normalmente o PRD).
+      placeholder: "#1"
+  - type: textarea
+    id: what-to-build
+    attributes:
+      label: What to build
+      description: O comportamento novo, de ponta a ponta, e o contexto (seções do PRD, ADRs, termos do GLOSSARY.md).
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: Critérios verificáveis, um por linha.
+      value: |
+        - [ ]
+    validations:
+      required: true
