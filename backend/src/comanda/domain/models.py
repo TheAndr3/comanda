@@ -28,6 +28,11 @@ class RefundStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class TicketStatus(StrEnum):
+    OPEN = "open"
+    RESOLVED = "resolved"
+
+
 @dataclass(frozen=True)
 class Customer:
     id: str
@@ -109,7 +114,10 @@ class Refund:
     rule_id: str
     item_ids: tuple[str, ...]
     created_at: datetime
-    note: str = ""
+    # Decisão do atendente humano; vazio enquanto o reembolso não passou pela Fila.
+    decided_by: str | None = None
+    decided_at: datetime | None = None
+    rejection_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -120,3 +128,4 @@ class Ticket:
     priority: str
     summary: str
     created_at: datetime
+    status: TicketStatus = TicketStatus.OPEN

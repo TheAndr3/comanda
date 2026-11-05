@@ -1,3 +1,5 @@
 # Fila do atendente humano no painel e na CLI
 
 Reembolsos pendentes e tickets precisam de alguém que os resolva, senão o fluxo de aprovação humana do ADR-0001 nunca termina. O atendente humano trabalha numa fila com duas portas sobre as mesmas funções: uma página no painel e comandos de CLI (`comanda queue list`, `approve`, `reject`). Ele aprova ou recusa o reembolso pendente com um motivo, mas não altera o valor, que continua saindo da regra. A CLI vem primeiro porque permite testar e avaliar o fluxo completo sem o painel; a página chega com o painel.
+
+Na implementação, a Fila também marca tickets como resolvidos (`comanda queue resolve`), e o Ticket passa a ter status aberto ou resolvido. O reembolso registra quem decidiu, quando (pelo relógio do sistema, ADR-0006) e o motivo da recusa, e só sai de pendente uma vez. A imutabilidade do valor fica garantida também no banco: um trigger do SQLite recusa qualquer `UPDATE` de `amount_cents`. Assim, nenhum caminho de código futuro, nem um acesso direto ao banco, altera o valor que a regra calculou.

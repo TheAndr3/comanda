@@ -20,6 +20,7 @@ from .models import (
     RefundStatus,
     Restaurant,
     Ticket,
+    TicketStatus,
 )
 
 SCHEMA = """
@@ -69,16 +70,18 @@ CREATE TABLE IF NOT EXISTS order_items (
     unit_price_cents INTEGER NOT NULL CHECK (unit_price_cents > 0)
 );
 CREATE TABLE IF NOT EXISTS refunds (
-    id           TEXT PRIMARY KEY,
-    order_id     TEXT NOT NULL REFERENCES orders(id),
-    customer_id  TEXT NOT NULL REFERENCES customers(id),
-    amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
-    issue        TEXT NOT NULL,
-    status       TEXT NOT NULL,
-    rule_id      TEXT NOT NULL,
-    item_ids     TEXT NOT NULL DEFAULT '[]',
-    created_at   TEXT NOT NULL,
-    note         TEXT NOT NULL DEFAULT ''
+    id               TEXT PRIMARY KEY,
+    order_id         TEXT NOT NULL REFERENCES orders(id),
+    customer_id      TEXT NOT NULL REFERENCES customers(id),
+    amount_cents     INTEGER NOT NULL CHECK (amount_cents > 0),
+    issue            TEXT NOT NULL,
+    status           TEXT NOT NULL,
+    rule_id          TEXT NOT NULL,
+    item_ids         TEXT NOT NULL DEFAULT '[]',
+    created_at       TEXT NOT NULL,
+    decided_by       TEXT,
+    decided_at       TEXT,
+    rejection_reason TEXT
 );
 CREATE TABLE IF NOT EXISTS tickets (
     id          TEXT PRIMARY KEY,
@@ -86,8 +89,16 @@ CREATE TABLE IF NOT EXISTS tickets (
     order_id    TEXT,
     priority    TEXT NOT NULL,
     summary     TEXT NOT NULL,
-    created_at  TEXT NOT NULL
+    created_at  TEXT NOT NULL,
+    status      TEXT NOT NULL
 );
+-- O valor sai da regra (ADR-0001) e ninguém o altera depois, nem o atendente humano (ADR-0007).
+CREATE TRIGGER IF NOT EXISTS refunds_amount_immutable
+BEFORE UPDATE OF amount_cents ON refunds
+WHEN NEW.amount_cents IS NOT OLD.amount_cents
+BEGIN
+    SELECT RAISE(ABORT, 'O valor do reembolso não pode ser alterado.');
+END;
 CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id, placed_at);
 CREATE INDEX IF NOT EXISTS idx_refunds_customer ON refunds(customer_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_refunds_order ON refunds(order_id);
@@ -284,13 +295,16 @@ class Repository:
             rule_id=row["rule_id"],
             item_ids=tuple(json.loads(row["item_ids"])),
             created_at=datetime.fromisoformat(row["created_at"]),
-            note=row["note"],
+            decided_by=row["decided_by"],
+            decided_at=_dt(row["decided_at"]),
+            rejection_reason=row["rejection_reason"],
         )
 
     def insert_refund(self, r: Refund) -> None:
         with self.connect() as conn:
             conn.execute(
-                "INSERT INTO refunds VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO refunds (id, order_id, customer_id, amount_cents, issue, status, rule_id, "
+                "item_ids, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     r.id,
                     r.order_id,
@@ -301,9 +315,13 @@ class Repository:
                     r.rule_id,
                     json.dumps(list(r.item_ids)),
                     r.created_at.isoformat(),
-                    r.note,
                 ),
             )
+
+    def get_refund(self, refund_id: str) -> Refund | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM refunds WHERE id = ?", (refund_id,)).fetchone()
+        return self._refund_from_row(row) if row else None
 
     def refunds_for_order(self, order_id: str) -> list[Refund]:
         with self.connect() as conn:
@@ -330,37 +348,85 @@ class Repository:
             rows = conn.execute(query + " ORDER BY created_at", params).fetchall()
         return [self._refund_from_row(r) for r in rows]
 
-    def set_refund_status(self, refund_id: str, status: RefundStatus, note: str = "") -> bool:
+    def decide_refund(
+        self,
+        refund_id: str,
+        status: RefundStatus,
+        decided_by: str,
+        decided_at: datetime,
+        rejection_reason: str | None = None,
+    ) -> bool:
+        """Registra a decisão humana. Só um reembolso pendente muda; devolve se mudou."""
         with self.connect() as conn:
             cur = conn.execute(
-                "UPDATE refunds SET status = ?, note = ? WHERE id = ? AND status = ?",
-                (status.value, note, refund_id, RefundStatus.PENDING_APPROVAL.value),
+                "UPDATE refunds SET status = ?, decided_by = ?, decided_at = ?, rejection_reason = ? "
+                "WHERE id = ? AND status = ?",
+                (
+                    status.value,
+                    decided_by,
+                    decided_at.isoformat(),
+                    rejection_reason,
+                    refund_id,
+                    RefundStatus.PENDING_APPROVAL.value,
+                ),
             )
             return cur.rowcount == 1
 
     def insert_ticket(self, t: Ticket) -> None:
         with self.connect() as conn:
             conn.execute(
-                "INSERT INTO tickets VALUES (?, ?, ?, ?, ?, ?)",
-                (t.id, t.customer_id, t.order_id, t.priority, t.summary, t.created_at.isoformat()),
+                "INSERT INTO tickets (id, customer_id, order_id, priority, summary, created_at, status) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    t.id,
+                    t.customer_id,
+                    t.order_id,
+                    t.priority,
+                    t.summary,
+                    t.created_at.isoformat(),
+                    t.status.value,
+                ),
             )
 
-    def list_tickets(self, customer_id: str | None = None) -> list[Ticket]:
-        query = "SELECT * FROM tickets"
-        params: tuple = ()
+    @staticmethod
+    def _ticket_from_row(row: sqlite3.Row) -> Ticket:
+        return Ticket(
+            id=row["id"],
+            customer_id=row["customer_id"],
+            order_id=row["order_id"],
+            priority=row["priority"],
+            summary=row["summary"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            status=TicketStatus(row["status"]),
+        )
+
+    def get_ticket(self, ticket_id: str) -> Ticket | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+        return self._ticket_from_row(row) if row else None
+
+    def list_tickets(
+        self, customer_id: str | None = None, status: TicketStatus | None = None
+    ) -> list[Ticket]:
+        conditions, params = [], []
         if customer_id:
-            query += " WHERE customer_id = ?"
-            params = (customer_id,)
+            conditions.append("customer_id = ?")
+            params.append(customer_id)
+        if status:
+            conditions.append("status = ?")
+            params.append(status.value)
+        query = "SELECT * FROM tickets"
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
         with self.connect() as conn:
             rows = conn.execute(query + " ORDER BY created_at", params).fetchall()
-        return [
-            Ticket(
-                id=r["id"],
-                customer_id=r["customer_id"],
-                order_id=r["order_id"],
-                priority=r["priority"],
-                summary=r["summary"],
-                created_at=datetime.fromisoformat(r["created_at"]),
+        return [self._ticket_from_row(r) for r in rows]
+
+    def resolve_ticket(self, ticket_id: str) -> bool:
+        """Marca o ticket como resolvido. Só um ticket aberto muda; devolve se mudou."""
+        with self.connect() as conn:
+            cur = conn.execute(
+                "UPDATE tickets SET status = ? WHERE id = ? AND status = ?",
+                (TicketStatus.RESOLVED.value, ticket_id, TicketStatus.OPEN.value),
             )
-            for r in rows
-        ]
+            return cur.rowcount == 1
