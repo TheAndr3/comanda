@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "comanda"
+version = "0.1.0"
+description = "Orquestração multi-agente para atendimento ao cliente de delivery, com regras de negócio aplicadas em código e avaliação automática."
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "André Vinícius Diz Freitas" }]
+dependencies = [
+    "claude-agent-sdk>=0.2",
+    "mcp>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+comanda = "comanda.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/comanda"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
