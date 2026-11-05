@@ -95,14 +95,13 @@ def _decide(ctx: ToolContext, order: Order, issue: IssueType, item_ids: list[str
         item_ids=item_ids,
         now=now,
         order_refunds=ctx.repo.refunds_for_order(order.id),
-        customer_recent_refunds=ctx.repo.refunds_for_customer(
-            ctx.customer_id, now - FREQUENT_REFUND_WINDOW
-        ),
+        customer_recent_refunds=ctx.repo.refunds_for_customer(ctx.customer_id, now - FREQUENT_REFUND_WINDOW),
         auto_limit_cents=ctx.settings.auto_refund_limit_cents,
     )
 
 
 # --- ferramentas ---------------------------------------------------------------
+
 
 def list_my_orders(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     limit = max(1, min(int(args.get("limit", 5)), 10))
@@ -164,8 +163,7 @@ def get_restaurant_info(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any
         "cuisine": restaurant.cuisine,
         "hours": f"{restaurant.opens_at}–{restaurant.closes_at}",
         "menu": [
-            {"name": m.name, "price": format_brl(m.price_cents), "allergens": list(m.allergens)}
-            for m in menu
+            {"name": m.name, "price": format_brl(m.price_cents), "allergens": list(m.allergens)} for m in menu
         ],
         "allergen_note": "Lista informada pelo restaurante; em alergia grave, confirme com ele.",
     }

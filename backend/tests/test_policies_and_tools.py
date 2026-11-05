@@ -120,7 +120,9 @@ def test_invalid_issue_is_rejected(ctx_for):
 
 def test_escalation_creates_ticket(ctx_for, repo):
     ctx = ctx_for("C006")
-    result = run_tool(ctx, "escalate_to_human", {"summary": "Cliente insiste no reembolso", "priority": "alta"})
+    result = run_tool(
+        ctx, "escalate_to_human", {"summary": "Cliente insiste no reembolso", "priority": "alta"}
+    )
     assert result["ticket_id"].startswith("TK-")
     assert repo.list_tickets("C006")[0].priority == "alta"
 

@@ -112,10 +112,7 @@ def evaluate_refund(
         if order.status == OrderStatus.CANCELLED:
             amount, rule_id = order.total_cents, "R-CANCELLED"
             reasons.append("Pedido cancelado: reembolso integral.")
-        elif (
-            order.status == OrderStatus.OUT_FOR_DELIVERY
-            and order.minutes_late(now) >= LOST_ORDER_MINUTES
-        ):
+        elif order.status == OrderStatus.OUT_FOR_DELIVERY and order.minutes_late(now) >= LOST_ORDER_MINUTES:
             amount, rule_id = order.total_cents, "R-LOST"
             reasons.append("Pedido em rota há mais de 90 min além do previsto: reembolso integral.")
         elif order.status == OrderStatus.DELIVERED:
@@ -145,13 +142,9 @@ def evaluate_refund(
     if amount > auto_limit_cents:
         requires_approval = True
         reasons.append(f"Valor acima de {format_brl(auto_limit_cents)}: exige aprovação humana.")
-    recent = [
-        r for r in _active(customer_recent_refunds) if now - r.created_at <= FREQUENT_REFUND_WINDOW
-    ]
+    recent = [r for r in _active(customer_recent_refunds) if now - r.created_at <= FREQUENT_REFUND_WINDOW]
     if len(recent) >= FREQUENT_REFUND_COUNT:
         requires_approval = True
-        reasons.append(
-            f"Cliente com {len(recent)} reembolsos nos últimos 30 dias: exige aprovação humana."
-        )
+        reasons.append(f"Cliente com {len(recent)} reembolsos nos últimos 30 dias: exige aprovação humana.")
 
     return RefundDecision(True, amount, requires_approval, rule_id, reasons)

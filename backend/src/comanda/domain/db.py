@@ -6,7 +6,7 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .models import (
@@ -131,7 +131,7 @@ class Repository:
             row = conn.execute("SELECT value FROM meta WHERE key = 'now'").fetchone()
         if row:
             return datetime.fromisoformat(row["value"])
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
     def set_now(self, value: datetime) -> None:
         with self.connect() as conn:
@@ -158,10 +158,7 @@ class Repository:
             )
             conn.executemany(
                 "INSERT INTO menu_items VALUES (?, ?, ?, ?, ?)",
-                [
-                    (m.id, m.restaurant_id, m.name, m.price_cents, json.dumps(list(m.allergens)))
-                    for m in menu
-                ],
+                [(m.id, m.restaurant_id, m.name, m.price_cents, json.dumps(list(m.allergens))) for m in menu],
             )
 
     def insert_order(self, o: Order) -> None:
@@ -183,10 +180,7 @@ class Repository:
             )
             conn.executemany(
                 "INSERT INTO order_items VALUES (?, ?, ?, ?, ?, ?)",
-                [
-                    (i.id, i.order_id, i.menu_item_id, i.name, i.quantity, i.unit_price_cents)
-                    for i in o.items
-                ],
+                [(i.id, i.order_id, i.menu_item_id, i.name, i.quantity, i.unit_price_cents) for i in o.items],
             )
 
     # --- leitura -------------------------------------------------------------
@@ -210,9 +204,7 @@ class Repository:
 
     def get_restaurant(self, restaurant_id: str) -> tuple[Restaurant, list[MenuItem]] | None:
         with self.connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM restaurants WHERE id = ?", (restaurant_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM restaurants WHERE id = ?", (restaurant_id,)).fetchone()
             if not row:
                 return None
             items = conn.execute(
@@ -323,8 +315,7 @@ class Repository:
     def refunds_for_customer(self, customer_id: str, since: datetime) -> list[Refund]:
         with self.connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM refunds WHERE customer_id = ? AND created_at >= ? "
-                "ORDER BY created_at",
+                "SELECT * FROM refunds WHERE customer_id = ? AND created_at >= ? ORDER BY created_at",
                 (customer_id, since.isoformat()),
             ).fetchall()
         return [self._refund_from_row(r) for r in rows]

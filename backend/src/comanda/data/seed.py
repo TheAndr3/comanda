@@ -27,7 +27,9 @@ BRT = timezone(timedelta(hours=-3))
 NOW = datetime(2026, 11, 5, 19, 30, tzinfo=BRT)
 CENTER = (-12.2664, -38.9663)  # Feira de Santana, BA
 
-RESTAURANTS: list[tuple[str, str, str, str, list[tuple[str, int, tuple[str, ...]]]]] = [
+# Tabelas de dados: o layout manual é mais legível que o do formatador.
+# fmt: off
+RESTAURANTS: list[tuple[str, str, str, str, str, list[tuple[str, int, tuple[str, ...]]]]] = [
     ("R01", "Burger da Praça", "Hambúrguer", "11:00", "23:30", [
         ("X-Burger", 2890, ("glúten", "lactose")),
         ("X-Bacon", 3490, ("glúten", "lactose")),
@@ -85,6 +87,7 @@ LAST_NAMES = [
     "Santos", "Oliveira", "Souza", "Lima", "Pereira", "Costa", "Rodrigues", "Almeida",
     "Nascimento", "Carvalho", "Ribeiro", "Barbosa", "Freitas", "Moreira",
 ]
+# fmt: on
 
 
 class _Builder:
@@ -109,9 +112,7 @@ class _Builder:
             slug = slug.replace(a, b)
         phone = f"+55 75 9{self.rng.randint(1000, 9999)}-{self.rng.randint(1000, 9999)}"
         created = NOW - timedelta(days=self.rng.randint(60, 900))
-        self.repo.insert_customer(
-            Customer(cid, f"{first} {last}", f"{slug}@example.com", phone, created)
-        )
+        self.repo.insert_customer(Customer(cid, f"{first} {last}", f"{slug}@example.com", phone, created))
 
     def order(
         self,
