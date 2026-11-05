@@ -1,7 +1,6 @@
 """Testes das regras de negócio através das ferramentas, cenário a cenário."""
 
 from comanda.domain.models import RefundStatus
-from comanda.knowledge import search_policies
 from comanda.tools import run_tool
 
 
@@ -127,8 +126,16 @@ def test_escalation_creates_ticket(ctx_for, repo):
     assert repo.list_tickets("C006")[0].priority == "alta"
 
 
-def test_policy_search_finds_relevant_section():
-    top = search_policies("o pedido atrasou uma hora, tenho direito a reembolso?")[0]
-    assert top["title"] == "Atraso na entrega"
-    top = search_policies("quanto tempo demora para o dinheiro voltar no pix")[0]
-    assert top["title"] == "Formas de reembolso"
+def top_policy(ctx, query):
+    return run_tool(ctx, "search_policies", {"query": query})["results"][0]["title"]
+
+
+def test_policy_search_matches_inflected_words(ctx_for):
+    # "atrasou" só aparece na política como "atraso"/"atrasos": exige reduzir ao radical.
+    query = "o pedido atrasou uma hora, tenho direito a reembolso?"
+    assert top_policy(ctx_for("C001"), query) == "Atraso na entrega"
+
+
+def test_policy_search_finds_refund_methods(ctx_for):
+    query = "quanto tempo demora para o dinheiro voltar no pix"
+    assert top_policy(ctx_for("C001"), query) == "Formas de reembolso"

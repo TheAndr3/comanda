@@ -1,0 +1,3 @@
+# Radicalizador do português escrito à mão
+
+A busca na Política reduz as palavras ao radical para que "atrasou" encontre "atraso". Em vez de depender de `snowballstemmer`, PyStemmer ou NLTK, o projeto implementa o algoritmo Snowball do português em `comanda/stemming.py`, do mesmo jeito que o BM25 em `knowledge.py` já é próprio. O pacote fica sem dependências de execução além do SDK de agentes e do MCP, e o algoritmo cabe em pouco mais de cem linhas, com referência pública. Se a busca precisar de mais idiomas ou de lematização de verdade, trocar a função `stem` por uma biblioteca não muda nenhuma outra parte.

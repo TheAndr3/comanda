@@ -10,19 +10,38 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from .stemming import stem
+
 POLICY_FILE = Path(__file__).parent / "policies" / "politicas.md"
 
+# fmt: off
 STOPWORDS = {
     "a", "o", "as", "os", "de", "da", "do", "das", "dos", "e", "em", "no", "na", "nos", "nas",
     "um", "uma", "para", "por", "com", "que", "se", "ao", "aos", "mais", "ou", "nao", "sao",
     "ser", "pelo", "pela", "meu", "minha", "eu", "foi", "tem", "como", "qual", "quando",
 }
+# fmt: on
+
+
+def _strip_accents(text: str) -> str:
+    text = unicodedata.normalize("NFKD", text)
+    return "".join(ch for ch in text if not unicodedata.combining(ch))
 
 
 def _normalize(text: str) -> list[str]:
-    text = unicodedata.normalize("NFKD", text.lower())
-    text = "".join(ch for ch in text if not unicodedata.combining(ch))
-    return [t for t in re.findall(r"[a-z0-9]+", text) if t not in STOPWORDS and len(t) > 1]
+    """Tokens comparáveis: sem stopwords, reduzidos ao radical e sem acentos.
+
+    O radical é calculado antes de tirar os acentos, porque o stemmer distingue sufixos
+    como "ção" e "ável".
+    """
+    tokens = []
+    for word in re.findall(r"[^\W_]+", unicodedata.normalize("NFC", text.lower())):
+        if _strip_accents(word) in STOPWORDS:
+            continue
+        token = _strip_accents(stem(word))
+        if len(token) > 1:
+            tokens.append(token)
+    return tokens
 
 
 @dataclass(frozen=True)
