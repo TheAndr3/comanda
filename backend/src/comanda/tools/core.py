@@ -28,10 +28,11 @@ class ToolError(Exception):
     """Erro esperado, devolvido ao agente como resultado de ferramenta com `is_error`."""
 
 
-@dataclass
+@dataclass(frozen=True)
 class ToolContext:
     repo: Repository
     settings: Settings
+    # Fixo: o cliente do atendimento não muda depois de criado o contexto (ADR-0009).
     customer_id: str
     # Estado da sessão usado pelos guardrails, por exemplo checagens de elegibilidade feitas.
     state: dict[str, Any] = field(default_factory=dict)
