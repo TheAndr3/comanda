@@ -6,7 +6,9 @@ runtime, enviar falas do cliente, receber as falas do sistema e os eventos do Ra
 
 from __future__ import annotations
 
+import asyncio
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -49,6 +51,8 @@ class Session:
         self.closed = False
         self._writer = TraceWriter(settings.runs_dir, self.id)
         self.events: list[TraceEvent] = []
+        # Trocado a cada evento novo: quem segue o Rastro espera o atual e acorda no próximo.
+        self._new_event = asyncio.Event()
         self._record("system", EventType.SESSION_STARTED, {"customer_id": customer_id})
 
     async def send(self, message: str) -> Turn:
@@ -68,6 +72,19 @@ class Session:
         """O arquivo JSONL do Rastro deste atendimento."""
         return self._writer.path
 
+    async def follow(self, after: int = -1) -> AsyncIterator[TraceEvent]:
+        """Os eventos do Rastro depois da posição `after`, em ordem, inclusive os que ainda vão
+        acontecer; termina no fim do atendimento. É o que o SSE do painel transmite."""
+        seq = max(after + 1, 0)
+        while True:
+            new_event = self._new_event
+            while seq < len(self.events):
+                yield self.events[seq]
+                seq += 1
+            if self.closed:
+                return
+            await new_event.wait()
+
     def close(self) -> None:
         if not self.closed:
             self._record("system", EventType.SESSION_ENDED, {})
@@ -86,6 +103,8 @@ class Session:
         self.events.append(event)
         if self._turn is not None:
             self._turn.events.append(event)
+        self._new_event.set()
+        self._new_event = asyncio.Event()
 
     # --- AgentHost -------------------------------------------------------------
 

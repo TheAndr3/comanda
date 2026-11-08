@@ -2,7 +2,8 @@
 
 `comanda seed` recria o banco; `comanda chat --customer <id>` abre um atendimento pelo
 terminal; `comanda queue ...` é a Fila do atendente humano (ADR-0007); `comanda eval` roda
-os cenários de avaliação com o cliente simulado (ADR-0015).
+os cenários de avaliação com o cliente simulado (ADR-0015); `comanda serve` sobe a API do
+painel (ADR-0005).
 """
 
 from __future__ import annotations
@@ -55,6 +56,10 @@ def _parser() -> argparse.ArgumentParser:
     reject.add_argument("--reason", required=True, help="Motivo da recusa (obrigatório).")
     resolve = queue.add_parser("resolve", help="Marca um ticket como resolvido.")
     resolve.add_argument("ticket_id")
+
+    serve = commands.add_parser("serve", help="Sobe a API do painel com o runtime do Claude Agent SDK.")
+    serve.add_argument("--host", default="127.0.0.1", help="Endereço (padrão: só esta máquina).")
+    serve.add_argument("--port", type=int, default=8000)
     return parser
 
 
@@ -112,6 +117,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     repo = Repository(settings.db_path)
     if args.command == "chat":
         return asyncio.run(run_chat(repo, settings, args.customer, show_trace=args.trace))
+    if args.command == "serve":
+        # Importados aqui para os outros comandos não carregarem o servidor web.
+        import uvicorn
+
+        from .api import create_app
+
+        # Um SSE aberto nunca termina sozinho; sem o limite, Ctrl+C esperaria o painel fechar.
+        uvicorn.run(create_app(settings), host=args.host, port=args.port, timeout_graceful_shutdown=3)
+        return 0
     try:
         _run_queue(repo, args)
     except QueueError as exc:
