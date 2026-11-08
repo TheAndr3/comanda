@@ -1,15 +1,18 @@
 """CLI do Comanda: adaptador fino sobre as operações de domínio.
 
-`comanda seed` recria o banco; `comanda queue ...` é a Fila do atendente humano (ADR-0007).
+`comanda seed` recria o banco; `comanda chat --customer <id>` abre um atendimento pelo
+terminal; `comanda queue ...` é a Fila do atendente humano (ADR-0007).
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import getpass
 import sys
 from collections.abc import Sequence
 
+from .chat import run_chat
 from .config import get_settings
 from .data.seed import seed_database
 from .domain.db import Repository
@@ -22,6 +25,10 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     commands.add_parser("seed", help="Recria o banco a partir do seed determinístico.")
+
+    chat = commands.add_parser("chat", help="Conversa com o atendimento pelo terminal.")
+    chat.add_argument("--customer", required=True, help="Cliente já autenticado, por exemplo C001.")
+    chat.add_argument("--trace", action="store_true", help="Mostra os eventos do Rastro a cada turno.")
 
     queue = commands.add_parser("queue", help="Fila do atendente humano.").add_subparsers(
         dest="action", required=True
@@ -82,8 +89,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not settings.db_path.exists():
         print(f"Banco não encontrado em {settings.db_path}. Rode `comanda seed` antes.", file=sys.stderr)
         return 1
+    repo = Repository(settings.db_path)
+    if args.command == "chat":
+        return asyncio.run(run_chat(repo, settings, args.customer, show_trace=args.trace))
     try:
-        _run_queue(Repository(settings.db_path), args)
+        _run_queue(repo, args)
     except QueueError as exc:
         print(str(exc), file=sys.stderr)
         return 1

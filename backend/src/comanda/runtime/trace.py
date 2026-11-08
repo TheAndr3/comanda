@@ -30,7 +30,8 @@ class EventType(StrEnum):
     SPECIALIST_RETURNED = "specialist_returned"
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
-    # Ainda sem emissor: o hook de elegibilidade (ADR-0008) entra em outro ticket.
+    # Hoje emitido quando um agente tenta uma ferramenta fora do seu papel (ADR-0013); o hook
+    # de elegibilidade (ADR-0008) entra em outro ticket.
     GUARDRAIL_BLOCKED = "guardrail_blocked"
     ESCALATION = "escalation"
     USAGE = "usage"

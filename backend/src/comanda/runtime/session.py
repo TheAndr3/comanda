@@ -9,6 +9,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from ..config import Settings
@@ -58,6 +59,11 @@ class Session:
         finally:
             self._turn = None
         return turn
+
+    @property
+    def trace_path(self) -> Path:
+        """O arquivo JSONL do Rastro deste atendimento."""
+        return self._writer.path
 
     def close(self) -> None:
         if not self.closed:
@@ -121,8 +127,20 @@ class Session:
                 "model": usage.model,
                 "input_tokens": usage.input_tokens,
                 "output_tokens": usage.output_tokens,
+                "cache_read_tokens": usage.cache_read_tokens,
+                "cache_write_tokens": usage.cache_write_tokens,
                 "cost_usd": usage.cost_usd,
+                "price_table_cost_usd": usage.price_table_cost_usd,
             },
+        )
+
+    def guardrail_blocked(
+        self, agent: Agent, guardrail: str, tool: str, args: dict[str, Any], reason: str
+    ) -> None:
+        self._record(
+            agent,
+            EventType.GUARDRAIL_BLOCKED,
+            {"guardrail": guardrail, "tool": tool, "args": args, "reason": reason},
         )
 
 

@@ -207,7 +207,15 @@ async def test_escalation_and_token_usage_are_traced(repo, settings):
     usage = turn.events[types.index("usage")]
     assert (usage.agent, usage.data) == (
         "reception",
-        {"model": "haiku", "input_tokens": 1200, "output_tokens": 80, "cost_usd": 0.0016},
+        {
+            "model": "haiku",
+            "input_tokens": 1200,
+            "output_tokens": 80,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "cost_usd": 0.0016,
+            "price_table_cost_usd": None,
+        },
     )
     [ticket] = repo.list_tickets("C003")
     escalation = turn.events[types.index("escalation")]
