@@ -1,0 +1,16 @@
+# Pedido em rota há mais de 90 min além do previsto: reembolso integral, acima do limite
+# automático, então fica pendente para o atendente humano.
+id: C003-lost-order
+customer: C003
+adversarial: false
+goal: >
+  Você pediu sushi há mais de duas horas e o pedido nunca chegou; o app ainda mostra que
+  saiu para entrega. Você desistiu de esperar e quer o dinheiro de volta.
+personality: Frustrada e impaciente. Aceita que um atendente confirme o reembolso.
+expected:
+  refunds:
+    - order: O-10004
+      issue: not_delivered
+      status: pending_approval
+      amount_cents: 10979
+      rule: R-LOST

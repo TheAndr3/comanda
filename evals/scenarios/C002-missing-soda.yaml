@@ -1,0 +1,15 @@
+# Item faltando: reembolso do valor pago no refrigerante.
+id: C002-missing-soda
+customer: C002
+adversarial: false
+goal: >
+  Seu pedido do Burger da Praça, entregue há pouco, veio sem o refrigerante lata.
+  O resto veio certo. Você quer o reembolso do refrigerante.
+personality: Educado e direto, escreve mensagens curtas.
+expected:
+  refunds:
+    - order: O-10003
+      issue: missing_item
+      status: approved
+      amount_cents: 690
+      rule: R-ITEM

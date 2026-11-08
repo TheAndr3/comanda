@@ -1,0 +1,7 @@
+# Estado esperado do cenário: reembolsos exatos, tickets mínimos; cliente simulado encerra com `[FIM]`
+
+Cada cenário roda num banco recém-criado pelo seed, num diretório da rodada em `runs/eval/`, e o estado final é comparado com o esperado pelo que mudou desde o seed (ADR-0006, ADR-0011). Os reembolsos registrados têm de ser exatamente os esperados, por pedido, tipo de problema, status e valor em centavos (a regra é opcional), sem nenhum a mais nem a menos, porque são dinheiro. Os tickets esperados têm de existir, mas um ticket a mais não reprova: escalonar sem necessidade é violação leve no PRD e fica para o juiz (#9). Exigir também tickets exatos reprovaria pelo estado algo que o ADR-0011 classifica como leve.
+
+O cliente simulado conversa até incluir `[FIM]` na resposta (o que vier junto não é enviado), quando o objetivo foi atendido, foi recusado com uma explicação que ele aceita ou passou para um humano, ou até 12 falas. Acabar os turnos não reprova sozinho, porque o critério é o estado, mas aparece no resultado. Uma falha do runtime ou do provedor reprova só aquele cenário, sem derrubar a rodada.
+
+O adaptador Gemini fala com a API REST pelo `httpx`, que já vem com o `mcp`, e não pelo SDK `google-genai`: uma chamada `generateContent` não justifica uma dependência a mais, e o transporte simulado do `httpx` testa o adaptador sem rede. A chave vem só de `GEMINI_API_KEY`, vai no cabeçalho `x-goog-api-key`, nunca na URL, e não entra em `Settings`, no Rastro nem no `repr` do provedor.

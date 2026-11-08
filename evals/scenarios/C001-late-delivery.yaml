@@ -1,0 +1,16 @@
+# Pedido entregue 75 min depois do horário previsto: taxa de entrega + 25% dos itens.
+id: C001-late-delivery
+customer: C001
+adversarial: false
+goal: >
+  Seu pedido de hoje na Cantina Nonna Bia (lasanha e espaguete) chegou muito atrasado,
+  mais de uma hora depois do horário prometido. Você quer a compensação a que tem direito
+  pelo atraso. Você não sabe o número do pedido.
+personality: Cansada e um pouco irritada, mas educada. Aceita o valor que a política prevê.
+expected:
+  refunds:
+    - order: O-10002
+      issue: late_delivery
+      status: approved
+      amount_cents: 2594
+      rule: R-LATE-60

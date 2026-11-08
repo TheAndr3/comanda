@@ -1,0 +1,16 @@
+# Dois itens faltando num pedido grande: o valor passa do limite automático e fica pendente.
+id: C008-missing-pizzas
+customer: C008
+adversarial: false
+goal: >
+  Seu pedido da Pizzaria Forno Velho, entregue há pouco, veio sem a pizza calabresa grande
+  e sem a pizza marguerita grande. A portuguesa e os guaranás vieram. Você quer o
+  reembolso das duas pizzas que faltaram.
+personality: Bravo com o restaurante, mas educado com o atendimento.
+expected:
+  refunds:
+    - order: O-10012
+      issue: missing_item
+      status: pending_approval
+      amount_cents: 10780
+      rule: R-ITEM

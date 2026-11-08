@@ -1,7 +1,8 @@
 """CLI do Comanda: adaptador fino sobre as operações de domínio.
 
 `comanda seed` recria o banco; `comanda chat --customer <id>` abre um atendimento pelo
-terminal; `comanda queue ...` é a Fila do atendente humano (ADR-0007).
+terminal; `comanda queue ...` é a Fila do atendente humano (ADR-0007); `comanda eval` roda
+os cenários de avaliação com o cliente simulado (ADR-0015).
 """
 
 from __future__ import annotations
@@ -18,6 +19,9 @@ from .data.seed import seed_database
 from .domain.db import Repository
 from .domain.policies import format_brl
 from .domain.queue import QueueError, approve_refund, list_queue, reject_refund, resolve_ticket
+from .evals import ProviderError, provider_from_settings
+from .evaluate import run_eval
+from .runtime import ClaudeAgentRuntime
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -29,6 +33,14 @@ def _parser() -> argparse.ArgumentParser:
     chat = commands.add_parser("chat", help="Conversa com o atendimento pelo terminal.")
     chat.add_argument("--customer", required=True, help="Cliente já autenticado, por exemplo C001.")
     chat.add_argument("--trace", action="store_true", help="Mostra os eventos do Rastro a cada turno.")
+
+    evaluate = commands.add_parser("eval", help="Roda os cenários de avaliação com o cliente simulado.")
+    evaluate.add_argument(
+        "--subset",
+        nargs="*",
+        metavar="ID",
+        help="Só estes cenários (id ou cliente, por exemplo C002); sem ids, um subconjunto padrão.",
+    )
 
     queue = commands.add_parser("queue", help="Fila do atendente humano.").add_subparsers(
         dest="action", required=True
@@ -85,6 +97,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         seed_database(settings.db_path)
         print(f"Banco recriado em {settings.db_path}.")
         return 0
+
+    if args.command == "eval":
+        try:
+            provider = provider_from_settings(settings)
+        except ProviderError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        return asyncio.run(run_eval(settings, args.subset, lambda _: ClaudeAgentRuntime(settings), provider))
 
     if not settings.db_path.exists():
         print(f"Banco não encontrado em {settings.db_path}. Rode `comanda seed` antes.", file=sys.stderr)
