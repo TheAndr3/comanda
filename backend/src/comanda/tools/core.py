@@ -39,7 +39,13 @@ class ToolContext:
 
     @property
     def checked_eligibility(self) -> set[tuple[str, str]]:
+        """Pares (pedido, tipo de problema) já consultados, montados por `eligibility_key`."""
         return self.state.setdefault("checked_eligibility", set())
+
+
+def eligibility_key(order_id: object, issue: object) -> tuple[str, str]:
+    """A chave da consulta de elegibilidade, igual para quem grava e para o guardrail."""
+    return str(order_id or "").strip(), str(issue or "")
 
 
 @dataclass(frozen=True)
@@ -179,7 +185,7 @@ def check_refund_eligibility(ctx: ToolContext, args: dict[str, Any]) -> dict[str
     issue = _issue(args["issue"])
     item_ids = list(args.get("item_ids") or [])
     decision = _decide(ctx, order, issue, item_ids)
-    ctx.checked_eligibility.add((order.id, issue.value))
+    ctx.checked_eligibility.add(eligibility_key(order.id, issue.value))
     return {"order_id": order.id, "issue": issue.value, **decision.to_dict()}
 
 
@@ -204,7 +210,7 @@ def issue_refund(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     )
     ctx.repo.insert_refund(refund)
     message = (
-        "Reembolso enviado para aprovação humana; o cliente recebe a resposta em até 24 horas."
+        "Reembolso registrado com o valor da regra; um atendente humano vai confirmar o reembolso."
         if status == RefundStatus.PENDING_APPROVAL
         else "Reembolso aprovado; o valor volta ao meio de pagamento do pedido."
     )
@@ -345,6 +351,27 @@ TOOLS: dict[str, ToolSpec] = {
         ),
     ]
 }
+
+
+ELIGIBILITY_GUARDRAIL = "eligibility_check"
+
+
+def eligibility_guardrail(ctx: ToolContext, name: str, args: dict[str, Any]) -> str | None:
+    """Motivo para negar `issue_refund` sem `check_refund_eligibility` antes (ADR-0008).
+
+    A consulta precisa ter sido feita no mesmo atendimento, para o mesmo pedido e tipo de
+    problema. O valor não depende disto, porque `issue_refund` recalcula a regra; o guardrail
+    protege o processo e deixa no Rastro o agente que pula a consulta.
+    """
+    if name != "issue_refund":
+        return None
+    order_id, issue = key = eligibility_key(args.get("order_id"), args.get("issue"))
+    if key in ctx.checked_eligibility:
+        return None
+    return (
+        f"Use check_refund_eligibility para o pedido {order_id or '?'} e o problema {issue or '?'} "
+        "antes de registrar o reembolso."
+    )
 
 
 def run_tool(ctx: ToolContext, name: str, args: dict[str, Any]) -> dict[str, Any]:

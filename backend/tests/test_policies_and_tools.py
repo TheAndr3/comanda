@@ -52,6 +52,9 @@ def test_lost_order_above_limit_needs_approval(ctx_for):
     result = run_tool(ctx, "issue_refund", {"order_id": order_id, "issue": "not_delivered"})
     assert result["status"] == RefundStatus.PENDING_APPROVAL
     assert result["rule_id"] == "R-LOST"
+    # A Recepção repete esta mensagem: valor definido, um atendente confirma, sem aviso depois.
+    assert "atendente" in result["message"] and "confirmar" in result["message"]
+    assert "análise" not in result["message"] and "24 horas" not in result["message"]
 
 
 def test_cancelled_order_full_refund(ctx_for):

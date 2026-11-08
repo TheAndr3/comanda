@@ -162,6 +162,57 @@ async def test_each_agent_only_reaches_its_own_tools(repo, settings):
     assert repo.list_tickets("C001") == []
 
 
+async def test_refunds_specialist_has_only_its_three_tools(repo, settings):
+    fake = FakeClaude([[Says("Olá!")]])
+    session = start_session(
+        repo, settings, customer_id="C001", runtime=ClaudeAgentRuntime(settings, client_factory=fake)
+    )
+    await session.send("Oi")
+
+    assert fake.options is not None and fake.options.agents is not None
+    assert sorted(fake.options.agents["refunds"].tools or []) == [
+        "mcp__refunds__check_refund_eligibility",
+        "mcp__refunds__escalate_to_human",
+        "mcp__refunds__issue_refund",
+    ]
+
+
+async def test_hook_denies_refund_without_eligibility_check_then_allows_it(repo, settings):
+    # C003: pedido em rota 100 min além do previsto, extraviado; R$ 109,79 exige aprovação.
+    lost = {"order_id": "O-10004", "issue": "not_delivered"}
+    fake = FakeClaude(
+        [
+            [
+                Delegates("toolu_d1", "refunds", "Registrar o reembolso do pedido extraviado."),
+                Calls("mcp__refunds__issue_refund", lost, "toolu_d1", "refunds"),
+                Calls(
+                    "mcp__refunds__check_refund_eligibility", lost, parent="toolu_d1", agent_type="refunds"
+                ),
+                Calls("mcp__refunds__issue_refund", lost, "toolu_d1", "refunds"),
+                Returns("toolu_d1", "Reembolso pendente registrado."),
+                Says("Seu reembolso foi registrado e um atendente vai confirmar."),
+            ]
+        ]
+    )
+    session = start_session(
+        repo, settings, customer_id="C003", runtime=ClaudeAgentRuntime(settings, client_factory=fake)
+    )
+
+    turn = await session.send("Meu pedido nunca chegou.")
+
+    [blocked] = [e for e in turn.events if e.type == "guardrail_blocked"]
+    assert (blocked.agent, blocked.data["guardrail"], blocked.data["tool"]) == (
+        "refunds",
+        "eligibility_check",
+        "issue_refund",
+    )
+    calls = [e.data["tool"] for e in turn.events if e.type == "tool_call"]
+    assert calls == ["check_refund_eligibility", "issue_refund"]
+    assert len(fake.tool_results) == 2 and not any(r.get("isError") for r in fake.tool_results)
+    [refund] = repo.refunds_for_order("O-10004")
+    assert (refund.amount_cents, refund.status.value, refund.rule_id) == (10979, "pending_approval", "R-LOST")
+
+
 async def test_sdk_error_ends_the_turn_with_a_clear_error(repo, settings):
     fake = FakeClaude(
         [

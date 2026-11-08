@@ -64,8 +64,10 @@ async def test_full_scripted_session_refunds_the_missing_item(repo, settings):
     assert first.replies == ["Você tem direito a R$ 6,90 pelo refrigerante. Posso registrar o reembolso?"]
     assert second.replies == ["Pronto! Os R$ 6,90 voltam para o meio de pagamento do pedido."]
 
+    # A consulta de elegibilidade veio antes, então o registro passa com o valor da regra.
     [refund] = repo.refunds_for_order("O-10003")
     assert (refund.amount_cents, refund.status, refund.rule_id) == (690, RefundStatus.APPROVED, "R-ITEM")
+    assert not [e for e in session.events if e.type == "guardrail_blocked"]
 
     assert [(e.agent, e.type) for e in first.events] == [
         ("customer", "customer_message"),
@@ -222,6 +224,51 @@ async def test_escalation_and_token_usage_are_traced(repo, settings):
     assert escalation.agent == "reception"
     assert escalation.data == {"ticket_id": ticket.id, "priority": "alta", "order_id": None}
     assert types.index("escalation") == types.index("tool_result") + 1
+
+
+async def test_refund_without_eligibility_check_is_blocked_and_traced(repo, settings):
+    runtime = ScriptedRuntime(
+        [
+            [
+                Delegate("refunds", "Registrar o reembolso do refrigerante do O-10003."),
+                ToolCall("refunds", "issue_refund", MISSING_SODA),
+                Return("refunds", "Não consegui registrar."),
+            ]
+        ]
+    )
+    session = start_session(repo, settings, customer_id="C002", runtime=runtime)
+
+    turn = await session.send("Faltou o refrigerante, quero o reembolso.")
+
+    [blocked] = [e for e in turn.events if e.type == "guardrail_blocked"]
+    assert blocked.agent == "refunds"
+    assert blocked.data["guardrail"] == "eligibility_check"
+    assert blocked.data["tool"] == "issue_refund"
+    assert blocked.data["args"] == MISSING_SODA
+    assert "check_refund_eligibility" in blocked.data["reason"]
+    assert not [e for e in turn.events if e.type in ("tool_call", "tool_result")]
+    assert repo.refunds_for_order("O-10003") == []
+
+
+async def test_eligibility_check_must_match_the_order_and_issue(repo, settings):
+    # C001 consulta o atraso do pedido O-10002 e tenta registrar outro tipo de problema.
+    late = {"order_id": "O-10002", "issue": "late_delivery"}
+    quality = {"order_id": "O-10002", "issue": "quality", "item_ids": ["O-10002-1"]}
+    runtime = ScriptedRuntime(
+        [
+            [
+                ToolCall("refunds", "check_refund_eligibility", late),
+                ToolCall("refunds", "issue_refund", quality),
+            ]
+        ]
+    )
+    session = start_session(repo, settings, customer_id="C001", runtime=runtime)
+
+    turn = await session.send("O pedido atrasou e veio frio.")
+
+    blocked = [e.data["args"] for e in turn.events if e.type == "guardrail_blocked"]
+    assert blocked == [quality]
+    assert repo.refunds_for_order("O-10002") == []
 
 
 async def test_closed_session_accepts_no_more_messages(repo, settings):

@@ -15,7 +15,7 @@ from typing import Any
 from ..agents.roles import AGENT_TOOLS, Agent, Specialist
 from ..config import Settings
 from ..domain.db import Repository
-from ..tools import ToolContext, run_tool
+from ..tools import ELIGIBILITY_GUARDRAIL, ToolContext, eligibility_guardrail, run_tool
 from .base import AgentRuntime, Usage
 from .masking import PersonalDataMask
 from .trace import Actor, EventType, TraceEvent, TraceWriter
@@ -100,10 +100,20 @@ class Session:
     def specialist_returned(self, specialist: Specialist, result: str) -> None:
         self._record(specialist, EventType.SPECIALIST_RETURNED, {"result": result})
 
+    def authorize(self, agent: Agent, name: str, args: dict[str, Any]) -> str | None:
+        reason = eligibility_guardrail(self._ctx, name, args)
+        if reason is not None:
+            self.guardrail_blocked(agent, ELIGIBILITY_GUARDRAIL, name, args, reason)
+        return reason
+
     def call_tool(self, agent: Agent, name: str, args: dict[str, Any]) -> dict[str, Any]:
         if name not in AGENT_TOOLS[agent]:  # ADR-0013, aplicado aqui para qualquer runtime (ADR-0017)
             reason = f"A ferramenta {name} não pertence a este agente."
             self.guardrail_blocked(agent, "agent_tools", name, args, reason)
+            return {"error": reason}
+        # O runtime do SDK já pergunta no hook `PreToolUse`; repetir aqui garante o guardrail
+        # para qualquer runtime, e uma chamada autorizada passa de novo sem registrar nada.
+        if (reason := self.authorize(agent, name, args)) is not None:
             return {"error": reason}
         self._call_seq += 1
         call_id = f"call-{self._call_seq}"
