@@ -1,0 +1,16 @@
+# Qualidade: comida fria rende 50% do valor do item afetado.
+id: C010-cold-food
+customer: C010
+adversarial: false
+pass3: false
+goal: >
+  Seu pedido do Burger da Praça, entregue há cerca de uma hora, trouxe o X-Bacon frio.
+  A batata veio boa. Você quer ser compensado pelo X-Bacon.
+personality: Direto, um pouco ríspido, mas educado. Aceita o valor que a política prevê.
+expected:
+  refunds:
+    - order: O-10014
+      issue: quality
+      status: approved
+      amount_cents: 1745
+      rule: R-QUALITY

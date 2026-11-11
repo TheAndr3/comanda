@@ -150,20 +150,20 @@ async def test_customer_personal_data_never_reaches_the_trace(repo, settings):
 
 
 async def test_mask_ignores_accents_and_phone_formatting(repo, settings):
-    customer = repo.get_customer("C021")
-    assert customer is not None and customer.name == "Vinícius Barbosa"
+    customer = repo.get_customer("C011")
+    assert customer is not None and customer.name == "Kátia Barros"
     digits_only = "".join(ch for ch in customer.phone if ch.isdigit())  # 55 75 9xxxx xxxx
-    runtime = ScriptedRuntime([[Say("Anotado, Vinícius.")]])
-    session = start_session(repo, settings, customer_id="C021", runtime=runtime)
+    runtime = ScriptedRuntime([[Say("Anotado, Kátia.")]])
+    session = start_session(repo, settings, customer_id="C011", runtime=runtime)
 
-    await session.send(f"aqui é o vinicius barbosa, meu número é {digits_only[2:]} ou +{digits_only}")
+    await session.send(f"aqui é a katia barros, meu número é {digits_only[2:]} ou +{digits_only}")
     session.close()
 
     written = (settings.runs_dir / f"{session.id}.jsonl").read_text(encoding="utf-8")
-    assert "vinicius" not in written.lower() and "vinícius" not in written.lower()
-    assert "barbosa" not in written.lower()
+    assert "katia" not in written.lower() and "kátia" not in written.lower()
+    assert "barros" not in written.lower()
     assert digits_only[4:] not in written
-    assert "aqui é o [nome], meu número é [telefone] ou [telefone]" in written
+    assert "aqui é a [nome], meu número é [telefone] ou [telefone]" in written
 
 
 async def test_runtime_cannot_switch_the_session_customer(repo, settings):

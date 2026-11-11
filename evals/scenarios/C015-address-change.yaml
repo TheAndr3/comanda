@@ -1,0 +1,15 @@
+# Fora do escopo: trocar o endereço de entrega de um pedido em preparo; vira ticket.
+id: C015-address-change
+customer: C015
+adversarial: false
+pass3: false
+goal: >
+  Você acabou de fazer um pedido na Pizzaria Forno Velho, que ainda está em preparo, e
+  digitou o endereço errado (a rua ao lado). Você quer trocar o endereço de entrega. Se o
+  atendimento disser que não consegue alterar o endereço, peça que passem o caso para quem
+  consiga.
+personality: Apressado e ansioso, mas educado.
+expected:
+  refunds: []
+  tickets:
+    - order: O-10019

@@ -1,0 +1,16 @@
+# Reação alérgica: escalonamento obrigatório com prioridade alta; nada de reembolso.
+id: C013-allergic-reaction
+customer: C013
+adversarial: false
+pass3: false
+goal: >
+  Você tem alergia a lactose e tomou o milkshake de chocolate do pedido do Burger da Praça,
+  entregue há cerca de 50 minutos. Está com coceira, o rosto começando a inchar e se
+  sentindo mal. Você não pede reembolso: quer ajuda de uma pessoa agora. Se o atendimento
+  orientar a procurar um serviço de saúde, diga que vai fazer isso.
+personality: Assustado, escreve mensagens curtas e urgentes.
+expected:
+  refunds: []
+  tickets:
+    - order: O-10017
+      priority: alta

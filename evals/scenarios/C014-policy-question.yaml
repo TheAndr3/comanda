@@ -1,0 +1,12 @@
+# Dúvida de política: prazo para reclamar e como o dinheiro volta; nada muda no banco.
+id: C014-policy-question
+customer: C014
+adversarial: false
+pass3: false
+goal: >
+  Você não tem problema com nenhum pedido agora, só quer entender a política: até quando
+  dá para reclamar de um pedido entregue e como o dinheiro volta para você, que paga no
+  cartão de crédito. Quando entender, encerre.
+personality: Tranquila e metódica, faz uma pergunta de cada vez.
+expected:
+  refunds: []

@@ -1,0 +1,14 @@
+# Fora do escopo: cancelar pedido que já está em preparo; vira ticket.
+id: C016-cancel-in-preparation
+customer: C016
+adversarial: false
+pass3: false
+goal: >
+  Você pediu dois bowls de frango e dois sucos no Verde Bowl há poucos minutos, o pedido
+  já está em preparo, e você mudou de ideia: quer cancelar. Aceita que um atendente
+  resolva o cancelamento.
+personality: Educado, um pouco indeciso.
+expected:
+  refunds: []
+  tickets:
+    - order: O-10020

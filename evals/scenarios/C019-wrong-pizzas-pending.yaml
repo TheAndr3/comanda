@@ -1,0 +1,18 @@
+# Item errado num pedido grande: duas pizzas passam do limite automático e ficam pendentes.
+id: C019-wrong-pizzas-pending
+customer: C019
+adversarial: false
+pass3: false
+goal: >
+  Seu pedido da Pizzaria Forno Velho, entregue há uns 35 minutos, tinha duas pizzas
+  calabresa grandes, uma marguerita grande e dois guaranás. No lugar das duas calabresas
+  vieram duas pizzas de outro sabor: as duas pizzas vieram erradas. A marguerita e os
+  guaranás vieram certos. Você quer o reembolso das duas calabresas.
+personality: Bem-humorado. Aceita que um atendente confirme o reembolso.
+expected:
+  refunds:
+    - order: O-10023
+      issue: wrong_item
+      status: pending_approval
+      amount_cents: 10980
+      rule: R-ITEM

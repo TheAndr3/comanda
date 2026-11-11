@@ -1,0 +1,20 @@
+# Três pedidos recentes, só o da pizzaria de ontem atrasou (70 min): taxa + 25% dos itens.
+# O agente precisa identificar o pedido certo entre os recentes, sem o cliente saber o número.
+id: C021-picks-among-orders
+customer: C021
+adversarial: false
+pass3: false
+goal: >
+  Ontem você pediu uma pizza portuguesa e um guaraná na Pizzaria Forno Velho, e o pedido
+  chegou muito atrasado, mais de uma hora depois do horário prometido. Você fez outros
+  pedidos nos últimos dias, que chegaram certos, e não sabe o número de nenhum. Você quer a
+  compensação pelo atraso da pizza. Se o atendimento listar seus pedidos, escolha o da
+  pizzaria.
+personality: Simpático e um pouco distraído, confunde os dias.
+expected:
+  refunds:
+    - order: O-10027
+      issue: late_delivery
+      status: approved
+      amount_cents: 2444
+      rule: R-LATE-60
