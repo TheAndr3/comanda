@@ -241,3 +241,18 @@ def test_violation_kinds_the_judge_made_up_are_counted_in_the_metrics_and_the_re
     assert metrics.ignored_judge_kinds == {"gíria": 1, "tom_rude": 2}
     assert report["metrics"]["ignored_judge_kinds"] == {"gíria": 1, "tom_rude": 2}
     assert report["attendances"][1]["ignored_judge_kinds"] == ["tom_rude", "gíria"]
+
+
+def test_total_cost_adds_every_attendance_including_the_ones_that_broke():
+    results = [
+        result("A", cost_usd=0.02),
+        result("B", cost_usd=0.005, error="RuntimeError: caiu"),
+        result("A", trial=2, cost_usd=0.01, judge_error="ProviderError: 429"),
+    ]
+    report = build_report(
+        results, created_at=datetime(2026, 11, 12, tzinfo=UTC), commit="abc1234", models={}, subset=None
+    )
+
+    assert compute_metrics(results).total_cost_usd == 0.035
+    assert report["metrics"]["total_cost_usd"] == 0.035
+    assert compute_metrics(results).mean_cost_usd == 0.015  # a média segue só dos que terminaram

@@ -111,3 +111,67 @@ async def test_gemini_retries_a_dropped_connection_and_reports_it_as_a_provider_
     with pytest.raises(ProviderError, match="sem rede"):
         await provider.complete("sistema", [ProviderMessage("user", "oi")])
     assert no_backoff == [1, 2]
+
+
+def sequence(*responses: httpx.Response):
+    answers = iter(responses)
+    calls: list[int] = []
+
+    def handle(_: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return next(answers)
+
+    return httpx.MockTransport(handle), calls
+
+
+OK = httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "Oi."}]}}]})
+
+
+async def test_gemini_waits_as_long_as_the_retry_after_header_says(no_backoff):
+    transport, _ = sequence(httpx.Response(429, headers={"Retry-After": "7"}), OK)
+    provider = GeminiProvider("gemini-test", api_key=FAKE_KEY, transport=transport)
+
+    assert await provider.complete("sistema", [ProviderMessage("user", "oi")]) == "Oi."
+    assert no_backoff == [7]
+
+
+async def test_gemini_waits_as_long_as_the_retry_delay_in_the_body_says(no_backoff):
+    body = {
+        "error": {
+            "code": 429,
+            "details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "12s"}],
+        }
+    }
+    transport, _ = sequence(httpx.Response(429, json=body), OK)
+    provider = GeminiProvider("gemini-test", api_key=FAKE_KEY, transport=transport)
+
+    assert await provider.complete("sistema", [ProviderMessage("user", "oi")]) == "Oi."
+    assert no_backoff == [12]
+
+
+async def test_gemini_retries_502_503_and_504_too(no_backoff):
+    transport, calls = sequence(httpx.Response(502), httpx.Response(504), httpx.Response(503), OK)
+    provider = GeminiProvider("gemini-test", api_key=FAKE_KEY, transport=transport)
+
+    assert await provider.complete("sistema", [ProviderMessage("user", "oi")]) == "Oi."
+    assert len(calls) == 4
+
+
+async def test_gemini_does_not_wait_past_the_total_budget(no_backoff):
+    limited = httpx.Response(429, headers={"Retry-After": "40"})
+    transport, calls = sequence(limited, limited, limited, OK)
+    provider = GeminiProvider("gemini-test", api_key=FAKE_KEY, transport=transport)
+
+    with pytest.raises(ProviderError, match="429"):
+        await provider.complete("sistema", [ProviderMessage("user", "oi")])
+    assert no_backoff == [40, 40]  # a 3ª espera passaria dos 90 s e nem começa
+    assert len(calls) == 3
+
+
+async def test_the_default_backoff_covers_a_per_minute_window_within_the_total_budget(no_backoff):
+    transport = httpx.MockTransport(lambda _: httpx.Response(429))
+    provider = GeminiProvider("gemini-test", api_key=FAKE_KEY, transport=transport)
+
+    with pytest.raises(ProviderError, match="429"):
+        await provider.complete("sistema", [ProviderMessage("user", "oi")])
+    assert 60 <= sum(no_backoff) <= 90

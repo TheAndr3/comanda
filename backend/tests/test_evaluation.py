@@ -19,6 +19,7 @@ from comanda.evals import (
     load_scenarios,
     run_scenario,
 )
+from comanda.evals import run as run_module
 from comanda.evals.run import Tokens
 from comanda.evaluate import current_commit, run_eval
 from comanda.runtime import Delegate, QuotaReading, Return, Say, ScriptedRuntime, ToolCall, Usage
@@ -578,3 +579,118 @@ async def test_judge_errors_do_not_carry_the_customers_personal_data(tmp_path, s
     assert customer.name not in result.judge_error
     assert customer.email not in result.judge_error
     assert "[nome]" in result.judge_error
+
+
+def spending_runtime() -> ScriptedRuntime:
+    return ScriptedRuntime(
+        [
+            [
+                QuotaReading("five_hour", "allowed", 0.2, resets_at=1_790_000_000),
+                Usage("reception", "claude-haiku-5-5", 1000, 100, cost_usd=0.002),
+                Say("Certo."),
+            ]
+        ]
+    )
+
+
+async def test_a_failure_after_the_conversation_keeps_the_cost_tokens_and_quota_already_spent(
+    tmp_path, settings, monkeypatch
+):
+    def boom(*args, **kwargs):
+        raise RuntimeError("banco travado")
+
+    monkeypatch.setattr(run_module, "check_final_state", boom)
+
+    result = await run_scenario(
+        scenario(tmp_path),
+        runtime=spending_runtime(),
+        provider=customer_says("Oi."),
+        settings=settings,
+        judge=judge_says(),
+    )
+
+    assert result.error is not None and "banco travado" in result.error
+    assert not result.passed
+    assert result.cost_usd == 0.002
+    assert result.tokens_by_model == {"claude-haiku-5-5": Tokens(1000, 100)}
+    assert [q.utilization for q in result.quota] == [0.2]
+
+
+class FailsToClose(ScriptedRuntime):
+    async def aclose(self) -> None:
+        raise RuntimeError("o CLI não fechou")
+
+
+async def test_a_runtime_that_fails_to_close_does_not_replace_the_real_result(tmp_path, settings):
+    result = await run_scenario(
+        scenario(tmp_path),
+        runtime=FailsToClose(refunding_runtime()._turns),
+        provider=customer_says("Meu pedido veio sem o refrigerante.", "Pode sim."),
+        settings=settings,
+        judge=judge_says(),
+    )
+
+    assert result.error is None
+    assert result.passed, (result.mismatches, result.violations)
+
+
+async def test_a_failure_while_seeding_still_closes_the_runtime_and_fails_only_that_scenario(
+    tmp_path, settings, monkeypatch
+):
+    def no_disk(*args, **kwargs):
+        raise OSError("disco cheio")
+
+    monkeypatch.setattr(run_module, "seed_database", no_disk)
+    runtime = ClosingRuntime([])
+
+    result = await run_scenario(
+        scenario(tmp_path), runtime=runtime, provider=customer_says("Oi."), settings=settings
+    )
+
+    assert result.error is not None and "disco cheio" in result.error
+    assert runtime.closed
+
+
+async def test_a_violation_detail_never_carries_another_customers_personal_data(tmp_path, settings, repo):
+    other = repo.get_customer("C001")
+    assert other is not None
+    line = f"O pedido de {other.name} ({other.email}) já foi entregue."
+    runtime = ScriptedRuntime([[Say(line)]])
+
+    result = await run_scenario(
+        scenario(tmp_path),
+        runtime=runtime,
+        provider=customer_says("Cadê meu pedido?"),
+        settings=settings,
+        judge=judge_says(("other_customer_data", line)),
+    )
+
+    [violation] = result.violations
+    assert violation.kind == "other_customer_data"
+    for secret in (other.name, other.email, *other.name.split()):
+        assert secret not in violation.detail
+
+
+async def test_the_error_of_a_scenario_that_broke_is_masked_in_the_run_report(
+    tmp_path, settings, repo, capsys
+):
+    customer = repo.get_customer("C001")
+    assert customer is not None
+    write_scenarios(tmp_path / "scenarios", "C002-broken")
+
+    def factory(_):
+        raise RuntimeError(f"falhou ao atender {customer.name}")
+
+    await run_eval(
+        replace(settings, scenarios_dir=tmp_path / "scenarios", results_dir=tmp_path / "results"),
+        subset=None,
+        runtime_factory=factory,
+        provider=ScriptedProvider([]),
+        judge=no_violations(0),
+        commit="abc1234",
+    )
+
+    [path] = (tmp_path / "results").glob("*.json")
+    text = path.read_text(encoding="utf-8")
+    assert customer.name not in text
+    assert "falhou ao atender [nome]" in text

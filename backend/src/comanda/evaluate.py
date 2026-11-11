@@ -10,6 +10,7 @@ esses ids ou desses clientes, uma vez cada.
 
 from __future__ import annotations
 
+import contextlib
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
@@ -28,9 +29,10 @@ from .evals.report import (
     summarize_quota,
     write_report,
 )
-from .evals.run import failed_result
+from .evals.run import failed_result, seeded_customers_mask
 from .evals.scenario import Scenario, load_scenarios
 from .runtime import AgentRuntime
+from .runtime.masking import CustomersMask
 
 # Um caso simples, um reembolso pendente e uma negativa: barato e cobre os três desfechos.
 DEFAULT_SUBSET = ("C002-missing-soda", "C003-lost-order", "C006-outside-window")
@@ -116,6 +118,7 @@ def _print_summary(metrics: Metrics, quota: dict[str, QuotaUse]) -> None:
     print(f"Resolução sem humano: {metrics.resolved_without_human_rate:.0%}")
     print(f"Violações: {metrics.grave_violations} graves, {metrics.minor_violations} leves")
     print(f"Custo equivalente em API por atendimento (estimativa): US$ {metrics.mean_cost_usd:.4f}")
+    print(f"Custo total da rodada (estimativa): US$ {metrics.total_cost_usd:.4f}")
     print(
         f"Latência por atendimento: {metrics.mean_latency_s:.1f} s "
         f"({metrics.mean_turn_latency_s:.1f} s por fala)"
@@ -166,6 +169,10 @@ async def run_eval(
     print(
         f"Avaliação de {len(scenarios)} cenários em {len(plan)} atendimentos; bancos e Rastros em {run_dir}"
     )
+    # Para o erro de quem nem chegou a abrir um banco: mascara os clientes do seed.
+    mask = CustomersMask()
+    with contextlib.suppress(Exception):
+        mask = seeded_customers_mask()
     results: list[ScenarioResult] = []
     for n, (scenario, trial) in enumerate(plan, start=1):
         repetition = f", repetição {trial}" if trial > 1 else ""
@@ -183,7 +190,8 @@ async def run_eval(
             )
         except Exception as exc:
             # Um cenário que quebra reprova sozinho: uma rodada cara não pode morrer no meio.
-            result = failed_result(scenario, scenario_settings, trial, f"{type(exc).__name__}: {exc}")
+            error = mask.apply(f"{type(exc).__name__}: {exc}")
+            result = failed_result(scenario, scenario_settings, trial, error)
         _print_result(result)
         results.append(result)
 

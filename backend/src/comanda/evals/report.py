@@ -51,6 +51,8 @@ class Metrics:
     errored_attendances: int = 0
     # Tipos de violação que o juiz inventou e foram ignorados, com a contagem.
     ignored_judge_kinds: dict[str, int] = field(default_factory=dict)
+    # Custo equivalente em API de todos os atendimentos da rodada, inclusive os que quebraram (ADR-0014).
+    total_cost_usd: float = 0.0
 
 
 def _mean(values: Sequence[float]) -> float:
@@ -115,6 +117,7 @@ def compute_metrics(results: Sequence[ScenarioResult]) -> Metrics:
         judge_errors=sum(r.judge_error is not None for r in results),
         unjudged_scenarios=[_label(r) for r in results if r.inconclusive],
         errored_attendances=sum(r.error is not None for r in results),
+        total_cost_usd=round(sum(r.cost_usd for r in results), 6),
         ignored_judge_kinds=dict(sorted(Counter(k for r in results for k in r.ignored_judge_kinds).items())),
     )
 
