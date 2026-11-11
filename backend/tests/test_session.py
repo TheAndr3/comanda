@@ -232,3 +232,29 @@ async def test_closed_session_accepts_no_more_messages(repo, settings):
     with pytest.raises(SessionClosed):
         await session.send("Oi")
     assert [e.type for e in session.events] == ["session_started", "session_ended"]
+
+
+async def test_session_blocks_a_tool_outside_the_agent_role_for_any_runtime(repo, settings):
+    # ADR-0013 vale na Atendimento (ADR-0017), não só no hook do adaptador do Claude.
+    runtime = ScriptedRuntime(
+        [
+            [
+                ToolCall("orders", "escalate_to_human", {"summary": "x"}),
+                ToolCall("reception", "list_my_orders", {}),
+                Say("Um momento."),
+            ]
+        ]
+    )
+    session = start_session(repo, settings, customer_id="C001", runtime=runtime)
+
+    turn = await session.send("Oi")
+
+    blocked = [
+        (e.agent, e.data["guardrail"], e.data["tool"]) for e in turn.events if e.type == "guardrail_blocked"
+    ]
+    assert blocked == [
+        ("orders", "agent_tools", "escalate_to_human"),
+        ("reception", "agent_tools", "list_my_orders"),
+    ]
+    assert not [e for e in turn.events if e.type in ("tool_call", "tool_result")]
+    assert repo.list_tickets("C001") == []

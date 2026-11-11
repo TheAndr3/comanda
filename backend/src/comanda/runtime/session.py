@@ -12,12 +12,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from ..agents.roles import AGENT_TOOLS, Agent, Specialist
 from ..config import Settings
 from ..domain.db import Repository
 from ..tools import ToolContext, run_tool
 from .base import AgentRuntime, Usage
 from .masking import PersonalDataMask
-from .trace import Actor, Agent, EventType, Specialist, TraceEvent, TraceWriter
+from .trace import Actor, EventType, TraceEvent, TraceWriter
 
 
 class SessionClosed(Exception):
@@ -42,6 +43,8 @@ class Session:
         self._ctx = ToolContext(repo=repo, settings=settings, customer_id=customer_id)
         self._runtime = runtime
         self._turn: Turn | None = None
+        # O turno mais recente, também quando o runtime falhou no meio dele.
+        self.last_turn: Turn | None = None
         self._call_seq = 0
         self.closed = False
         self._writer = TraceWriter(settings.runs_dir, self.id)
@@ -51,7 +54,7 @@ class Session:
     async def send(self, message: str) -> Turn:
         if self.closed:
             raise SessionClosed(f"O atendimento {self.id} já foi encerrado.")
-        self._turn = Turn()
+        self._turn = self.last_turn = Turn()
         self._record("customer", EventType.CUSTOMER_MESSAGE, {"text": message})
         turn = self._turn
         try:
@@ -98,6 +101,10 @@ class Session:
         self._record(specialist, EventType.SPECIALIST_RETURNED, {"result": result})
 
     def call_tool(self, agent: Agent, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        if name not in AGENT_TOOLS[agent]:  # ADR-0013, aplicado aqui para qualquer runtime (ADR-0017)
+            reason = f"A ferramenta {name} não pertence a este agente."
+            self.guardrail_blocked(agent, "agent_tools", name, args, reason)
+            return {"error": reason}
         self._call_seq += 1
         call_id = f"call-{self._call_seq}"
         self._record(agent, EventType.TOOL_CALL, {"call_id": call_id, "tool": name, "args": args})
@@ -135,7 +142,7 @@ class Session:
         )
 
     def guardrail_blocked(
-        self, agent: Agent, guardrail: str, tool: str, args: dict[str, Any], reason: str
+        self, agent: Actor, guardrail: str, tool: str, args: dict[str, Any], reason: str
     ) -> None:
         self._record(
             agent,

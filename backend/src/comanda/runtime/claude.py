@@ -11,7 +11,9 @@ usuário ou do projeto, só os servidores MCP declarados aqui e sem pedidos de p
 
 from __future__ import annotations
 
+import contextlib
 import json
+import re
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -21,6 +23,7 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    ClaudeSDKError,
     HookContext,
     HookInput,
     HookJSONOutput,
@@ -36,11 +39,12 @@ from claude_agent_sdk import (
 )
 
 from ..agents import RECEPTION, SPECIALISTS, AgentSpec
+from ..agents.roles import Agent, Specialist
 from ..config import Settings
 from ..tools import TOOLS
 from .base import AgentHost, Usage
-from .pricing import estimate_cost_usd
-from .trace import Agent, Specialist
+from .pricing import estimate_cost_usd, price_for
+from .trace import Actor
 
 # O CLI chama a ferramenta de subagentes de `Agent`; versões antigas, de `Task`.
 DELEGATION_TOOLS = frozenset({"Agent", "Task"})
@@ -80,6 +84,17 @@ class _Tokens:
         self.cache_write_1h += one_hour
         self.cache_write_5m += written - one_hour
 
+    @property
+    def cache_write(self) -> int:
+        return self.cache_write_5m + self.cache_write_1h
+
+    def merge(self, other: _Tokens) -> None:
+        self.input += other.input
+        self.output += other.output
+        self.cache_read += other.cache_read
+        self.cache_write_5m += other.cache_write_5m
+        self.cache_write_1h += other.cache_write_1h
+
     def table_cost(self, model: str) -> float | None:
         return estimate_cost_usd(
             model,
@@ -89,6 +104,34 @@ class _Tokens:
             cache_write_5m_tokens=self.cache_write_5m,
             cache_write_1h_tokens=self.cache_write_1h,
         )
+
+
+@dataclass
+class _Reported:
+    """O que o SDK informou de um modelo neste turno: já a diferença para o turno anterior."""
+
+    tokens: _Tokens
+    cost_usd: float
+    canonical: str | None
+
+
+_USAGE_FIELDS = ("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens", "costUSD")
+# O CLI anexa ao resultado do subagente um rodapé de controle que não é do especialista.
+_USAGE_FOOTER = re.compile(r"\s*<usage>.*?</usage>\s*$", re.DOTALL)
+_AGENT_ID_FOOTER = re.compile(r"\s*agentId:[^\n]*\s*$")
+_TOOLS_USED = re.compile(r"\s*<tools-used-before-summary>.*?</tools-used-before-summary>\s*", re.DOTALL)
+_HAND_BACK = re.compile(r"\[Subagent hand-back\].*?The report follows:\n", re.DOTALL)
+
+
+def _split(total: int, weights: list[float]) -> list[int]:
+    """Reparte `total` em inteiros na proporção dos pesos, sem perder nem criar unidades."""
+    if total <= 0:
+        return [0] * len(weights)
+    if sum(weights) <= 0:
+        weights = [1.0] * len(weights)
+    shares = [int(total * w / sum(weights)) for w in weights]
+    shares[max(range(len(weights)), key=lambda i: weights[i])] += total - sum(shares)
+    return shares
 
 
 def tool_name(agent: Agent, tool: str) -> str:
@@ -107,6 +150,8 @@ class ClaudeAgentRuntime:
         # Tokens deste turno por agente e modelo, e as mensagens já contadas.
         self._tokens: dict[tuple[Agent, str], _Tokens] = {}
         self._counted: set[str] = set()
+        # `model_usage` do SDK é o acumulado da conexão: guardo o último para tirar a diferença.
+        self._usage_seen: dict[str, dict[str, Any]] = {}
 
     # --- AgentRuntime ------------------------------------------------------------
 
@@ -118,13 +163,23 @@ class ClaudeAgentRuntime:
             await client.query(message)
             async for sdk_message in client.receive_response():
                 self._handle(sdk_message, host)
+        except (ClaudeSDKError, OSError) as exc:
+            # Cliente morto (CLI caiu, JSON inválido): descarta para o próximo turno reconectar.
+            await self._discard_client()
+            raise AgentRuntimeError(f"Falha na conexão com o Claude Code: {exc}") from exc
         finally:
             self._host = None
 
     async def aclose(self) -> None:
-        if self._client is not None:
-            await self._client.disconnect()
-            self._client = None
+        client, self._client = self._client, None
+        self._usage_seen = {}
+        if client is not None:
+            await client.disconnect()
+
+    async def _discard_client(self) -> None:
+        # O cliente já falhou: só precisa deixar de ser reaproveitado.
+        with contextlib.suppress(Exception):
+            await self.aclose()
 
     # --- mensagens do SDK -> AgentHost -------------------------------------------
 
@@ -140,14 +195,15 @@ class ClaudeAgentRuntime:
                     host.say(block.text)
                 elif isinstance(block, ToolUseBlock) and block.name in DELEGATION_TOOLS:
                     specialist = block.input.get("subagent_type")
-                    if specialist in SPECIALISTS:
+                    # Em segundo plano o hook nega a chamada: não é uma delegação do turno.
+                    if specialist in SPECIALISTS and not block.input.get("run_in_background"):
                         self._delegations[block.id] = specialist
                         host.delegate(specialist, str(block.input.get("prompt", "")))
         elif isinstance(message, UserMessage) and isinstance(message.content, list):
             for block in message.content:
                 if isinstance(block, ToolResultBlock) and block.tool_use_id in self._delegations:
                     specialist = self._delegations[block.tool_use_id]
-                    host.specialist_returned(specialist, _text(block.content))
+                    host.specialist_returned(specialist, _specialist_report(_text(block.content)))
         elif isinstance(message, ResultMessage):
             self._record_usage(message, host)
             if message.is_error:
@@ -171,46 +227,103 @@ class ClaudeAgentRuntime:
         agent: Agent = "reception" if parent is None else self._delegations.get(parent, "reception")
         self._tokens.setdefault((agent, message.model), _Tokens()).add(message.usage)
 
+    def _turn_usage(self, result: ResultMessage) -> dict[str, _Reported]:
+        """Por modelo, o que o SDK contou neste turno: o acumulado menos o do turno anterior."""
+        turn: dict[str, _Reported] = {}
+        for key, current in (result.model_usage or {}).items():
+            previous = self._usage_seen.get(key) or {}
+            now = {f: current.get(f) or 0 for f in _USAGE_FIELDS}
+            before = {f: previous.get(f) or 0 for f in _USAGE_FIELDS}
+            self._usage_seen[key] = dict(now)
+            # Se algum contador diminuiu, a conexão recomeçou: o valor atual já é só deste turno.
+            restarted = any(now[f] < before[f] for f in _USAGE_FIELDS)
+            delta = now if restarted else {f: now[f] - before[f] for f in _USAGE_FIELDS}
+            if not any(delta.values()):
+                continue  # o modelo não foi usado neste turno
+            turn[key] = _Reported(
+                tokens=_Tokens(
+                    input=delta["inputTokens"],
+                    output=delta["outputTokens"],
+                    cache_read=delta["cacheReadInputTokens"],
+                    cache_write_5m=delta["cacheCreationInputTokens"],
+                ),
+                cost_usd=round(delta["costUSD"], 8),
+                canonical=current.get("canonicalModel"),
+            )
+        return turn
+
+    @staticmethod
+    def _usage_key(message_model: str, reported: dict[str, _Reported]) -> str:
+        """A chave de `model_usage` do modelo de uma mensagem: igual, `canonicalModel` ou com data."""
+        for key, rep in reported.items():
+            names = [n for n in (key, rep.canonical) if n]
+            if any(
+                message_model == n or message_model.startswith(n) or n.startswith(message_model)
+                for n in names
+            ):
+                return key
+        return message_model
+
     def _record_usage(self, result: ResultMessage, host: AgentHost) -> None:
         """Registra os tokens do turno por agente e modelo, com o custo equivalente em API.
 
-        Se o SDK informa o custo de um modelo, ele é o custo usado, dividido entre os agentes
-        que usaram o modelo na proporção do cálculo pela tabela (ADR-0014, ADR-0019).
+        O total de cada modelo é o que o SDK contou no turno. As mensagens dizem quem usou:
+        o que elas somam fica com cada agente, e o que faltou (a resposta final de texto de
+        um especialista, os `output_tokens` finais) é repartido entre os agentes do modelo
+        na proporção do que já tinham. Se o SDK informa o custo, ele é o custo usado,
+        dividido na proporção do cálculo pela tabela (ADR-0014, ADR-0019).
         """
-        by_model = result.model_usage or {}
-        for model, reported in by_model.items():
-            if not any(m == model for _, m in self._tokens):
+        reported = self._turn_usage(result)
+        by_key: dict[str, dict[Agent, _Tokens]] = {}
+        for (agent, message_model), tokens in self._tokens.items():
+            key = self._usage_key(message_model, reported)
+            by_key.setdefault(key, {}).setdefault(agent, _Tokens()).merge(tokens)
+        for key, rep in reported.items():
+            agents = by_key.setdefault(key, {})
+            if not agents:
                 # O SDK contou um modelo que não apareceu nas mensagens: atribui ao
                 # especialista do turno, se houve um só, ou à Recepção.
                 specialists = set(self._delegations.values())
-                agent: Agent = specialists.pop() if len(specialists) == 1 else "reception"
-                self._tokens[(agent, model)] = _Tokens(
-                    input=reported.get("inputTokens", 0),
-                    output=reported.get("outputTokens", 0),
-                    cache_read=reported.get("cacheReadInputTokens", 0),
-                    cache_write_5m=reported.get("cacheCreationInputTokens", 0),
+                owner: Agent = specialists.pop() if len(specialists) == 1 else "reception"
+                agents[owner] = _Tokens()
+            self._share_missing(agents, rep.tokens, key)
+        for key, agents in by_key.items():
+            rep = reported.get(key)
+            price_model = key if price_for(key) or not rep or not rep.canonical else rep.canonical
+            tables = {agent: tokens.table_cost(price_model) for agent, tokens in agents.items()}
+            weights = {a: tables[a] or (t.input + t.output) for a, t in agents.items()}
+            for agent, tokens in agents.items():
+                cost = tables[agent]
+                if rep is not None and rep.cost_usd > 0:
+                    total = sum(weights.values())
+                    cost = round(rep.cost_usd * weights[agent] / total, 8) if total else rep.cost_usd
+                host.record_usage(
+                    Usage(
+                        agent=agent,
+                        model=key,
+                        input_tokens=tokens.input,
+                        output_tokens=tokens.output,
+                        cache_read_tokens=tokens.cache_read,
+                        cache_write_tokens=tokens.cache_write,
+                        cost_usd=cost,
+                        price_table_cost_usd=tables[agent],
+                    )
                 )
-        for (agent, model), tokens in self._tokens.items():
-            table_cost = tokens.table_cost(model)
-            sdk_cost = (by_model.get(model) or {}).get("costUSD") or 0
-            cost = table_cost
-            if sdk_cost > 0:
-                peers = [t for (_, m), t in self._tokens.items() if m == model]
-                weights = [t.table_cost(model) or (t.input + t.output) for t in peers]
-                own = table_cost or (tokens.input + tokens.output)
-                cost = round(sdk_cost * own / sum(weights), 8) if sum(weights) else sdk_cost
-            host.record_usage(
-                Usage(
-                    agent=agent,
-                    model=model,
-                    input_tokens=tokens.input,
-                    output_tokens=tokens.output,
-                    cache_read_tokens=tokens.cache_read,
-                    cache_write_tokens=tokens.cache_write_5m + tokens.cache_write_1h,
-                    cost_usd=cost,
-                    price_table_cost_usd=table_cost,
-                )
-            )
+
+    @staticmethod
+    def _share_missing(agents: dict[Agent, _Tokens], total: _Tokens, model: str) -> None:
+        """Soma aos agentes o que o SDK contou e as mensagens não mostraram."""
+        held = list(agents.values())
+        weights = [t.table_cost(model) or (t.input + t.output) for t in held]
+        missing = {
+            "input": total.input - sum(t.input for t in held),
+            "output": total.output - sum(t.output for t in held),
+            "cache_read": total.cache_read - sum(t.cache_read for t in held),
+            "cache_write_5m": total.cache_write - sum(t.cache_write for t in held),
+        }
+        for field, amount in missing.items():
+            for tokens, share in zip(held, _split(amount, weights), strict=True):
+                setattr(tokens, field, getattr(tokens, field) + share)
 
     # --- sessão do SDK -----------------------------------------------------------
 
@@ -219,12 +332,18 @@ class ClaudeAgentRuntime:
             client = self._client_factory(self._options())
             await client.connect()
             self._client = client
+            self._usage_seen = {}  # conexão nova: os contadores do SDK recomeçam do zero
         return self._client
 
     def _options(self) -> ClaudeAgentOptions:
         specs = [RECEPTION, *SPECIALISTS.values()]
         return ClaudeAgentOptions(
             system_prompt=RECEPTION.prompt,
+            # O CLI expande `@caminho` e executa `/comando` no texto do cliente, sem passar pelo
+            # hook; com isto a fala chega ao modelo como foi escrita (ADR-0008, ADR-0009).
+            verbatim_prompts=True,
+            # Sem as falas dos subagentes, o consumo de cada especialista fica incompleto.
+            forward_subagent_text=True,
             model=self._settings.reception_model,
             tools=["Agent"],
             allowed_tools=["Agent", *(tool_name(s.name, t) for s in specs for t in s.tools)],
@@ -257,18 +376,28 @@ class ClaudeAgentRuntime:
         """
         data: dict[str, Any] = dict(hook_input)
         caller_type = data.get("agent_type")
-        caller: Agent = caller_type if caller_type in SPECIALISTS else "reception"
         raw_name: str = data.get("tool_name", "")
         args: dict[str, Any] = data.get("tool_input") or {}
+        caller: Actor
+        if caller_type is None:
+            caller = "reception"
+        elif caller_type in SPECIALISTS:
+            caller = caller_type
+        else:
+            caller = "system"  # subagente que não é nosso: não é a Recepção nem um especialista
         tool, reason = raw_name, None
-        if raw_name in DELEGATION_TOOLS:
+        if caller == "system":
+            reason = f"O agente {caller_type!r} não é um agente do atendimento e não tem ferramentas."
+        elif raw_name in DELEGATION_TOOLS:
             if caller != "reception":
                 reason = "Só a Recepção delega."
             elif args.get("subagent_type") not in SPECIALISTS:
                 reason = f"Não há especialista {args.get('subagent_type')!r}; use: {', '.join(SPECIALISTS)}."
+            elif args.get("run_in_background"):
+                reason = "Delegue em primeiro plano: o especialista precisa devolver o resultado neste turno."
         elif raw_name.startswith("mcp__") and raw_name.count("__") >= 2:
             _, owner, tool = raw_name.split("__", 2)
-            if owner != caller or caller_type not in (None, *SPECIALISTS):
+            if owner != caller:
                 reason = f"A ferramenta {tool} não pertence a este agente."
         else:
             reason = f"Ferramenta {raw_name} indisponível neste atendimento."
@@ -302,6 +431,20 @@ class ClaudeAgentRuntime:
         return SdkMcpTool(
             name=spec.name, description=spec.description, input_schema=spec.input_schema, handler=handler
         )
+
+
+def _specialist_report(text: str) -> str:
+    """O relatório do especialista, sem o que o CLI acrescenta ao devolvê-lo à Recepção.
+
+    O CLI 2.1 antepõe a lista de ferramentas e um aviso de autoridade, indenta o relatório em
+    duas colunas e acrescenta `agentId` e `<usage>`. Nada disso é fala do especialista, e iria
+    ao Rastro, ao SSE e ao replay público (ADR-0010, ADR-0012).
+    """
+    text = _TOOLS_USED.sub("", text)
+    if (frame := _HAND_BACK.search(text)) is not None:
+        report = text[frame.end() :]
+        text = "\n".join(line.removeprefix("  ") for line in report.split("\n"))
+    return _AGENT_ID_FOOTER.sub("", _USAGE_FOOTER.sub("", text)).strip()
 
 
 def _text(content: str | list[dict[str, Any]] | None) -> str:

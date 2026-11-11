@@ -60,6 +60,7 @@ class Delegates:
     subagent_type: str
     prompt: str
     tool_name: str = "Agent"
+    run_in_background: bool = False
 
 
 @dataclass
@@ -92,13 +93,26 @@ class Ends:
     result: str | None = None
 
 
-Step = Says | Delegates | Calls | Returns | Ends
+@dataclass
+class Raises:
+    """O transporte do SDK falha no meio do turno (processo do CLI morreu, JSON inválido)."""
+
+    error: Exception
+
+
+Step = Says | Delegates | Calls | Returns | Ends | Raises
 
 
 def model_usage(
-    input_tokens: int, output_tokens: int, cost_usd: float, cache_read: int = 0, cache_write: int = 0
+    input_tokens: int,
+    output_tokens: int,
+    cost_usd: float,
+    cache_read: int = 0,
+    cache_write: int = 0,
+    canonical: str | None = None,
 ):
-    return {
+    extra = {"canonicalModel": canonical} if canonical else {}
+    return extra | {
         "inputTokens": input_tokens,
         "outputTokens": output_tokens,
         "cacheReadInputTokens": cache_read,
@@ -119,6 +133,7 @@ class FakeClaude:
         self.prompts: list[str] = []
         self.tool_results: list[dict[str, Any]] = []
         self.connected = False
+        self.connects = 0
         self._bridges: dict[str, SdkMcpBridge] = {}
 
     def __call__(self, options: ClaudeAgentOptions) -> FakeClaude:
@@ -127,11 +142,13 @@ class FakeClaude:
 
     async def connect(self) -> None:
         self.connected = True
+        self.connects += 1
 
     async def disconnect(self) -> None:
         self.connected = False
         for bridge in self._bridges.values():
             await bridge.aclose()
+        self._bridges.clear()
 
     async def query(self, prompt: str) -> None:
         self.prompts.append(prompt)
@@ -147,8 +164,14 @@ class FakeClaude:
         match step:
             case Says(text, model, parent, usage):
                 return [self._assistant([TextBlock(text)], model, parent, usage)]
-            case Delegates(tool_use_id, subagent_type, prompt, tool_name):
-                args = {"subagent_type": subagent_type, "prompt": prompt, "description": prompt[:40]}
+            case Delegates(tool_use_id, subagent_type, prompt, tool_name, in_background):
+                args: dict[str, Any] = {
+                    "subagent_type": subagent_type,
+                    "prompt": prompt,
+                    "description": prompt[:40],
+                }
+                if in_background:
+                    args["run_in_background"] = True
                 use = self._assistant([ToolUseBlock(tool_use_id, tool_name, args)], HAIKU, None)
                 denied = await self._pre_tool_use(tool_name, args, tool_use_id, None)
                 if denied is None:
@@ -166,6 +189,8 @@ class FakeClaude:
                 return [use, self._tool_result(tool_use_id, text, result.get("isError", False), parent)]
             case Returns(tool_use_id, text):
                 return [self._tool_result(tool_use_id, [{"type": "text", "text": text}])]
+            case Raises(error):
+                raise error
             case Ends(usage_by_model, total_cost_usd, is_error, result):
                 return [
                     ResultMessage(

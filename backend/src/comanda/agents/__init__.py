@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..runtime.trace import Agent, Specialist
+from .roles import AGENT_TOOLS, Agent, Specialist
 
 
 @dataclass(frozen=True)
@@ -62,7 +62,7 @@ RECEPTION = AgentSpec(
     name="reception",
     description="Conversa com o cliente e delega aos especialistas.",
     prompt=RECEPTION_PROMPT,
-    tools=("search_policies", "escalate_to_human"),
+    tools=AGENT_TOOLS["reception"],
 )
 
 ORDERS = AgentSpec(
@@ -73,9 +73,9 @@ ORDERS = AgentSpec(
         "de pedido, entrega ou restaurante."
     ),
     prompt=ORDERS_PROMPT,
-    tools=("list_my_orders", "get_order_details", "track_delivery", "get_restaurant_info"),
+    tools=AGENT_TOOLS["orders"],
 )
 
 SPECIALISTS: dict[Specialist, AgentSpec] = {"orders": ORDERS}
 
-__all__ = ["ORDERS", "RECEPTION", "SPECIALISTS", "AgentSpec"]
+__all__ = ["AGENT_TOOLS", "ORDERS", "RECEPTION", "SPECIALISTS", "Agent", "AgentSpec", "Specialist"]

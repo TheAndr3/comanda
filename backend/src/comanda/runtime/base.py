@@ -10,7 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .trace import Agent, Specialist
+from ..agents.roles import Agent, Specialist
+from .trace import Actor
 
 
 @dataclass(frozen=True)
@@ -58,9 +59,12 @@ class AgentHost(Protocol):
         ...
 
     def guardrail_blocked(
-        self, agent: Agent, guardrail: str, tool: str, args: dict[str, Any], reason: str
+        self, agent: Actor, guardrail: str, tool: str, args: dict[str, Any], reason: str
     ) -> None:
-        """Registra uma ação que um guardrail impediu antes de a ferramenta rodar."""
+        """Registra uma ação que um guardrail impediu antes de a ferramenta rodar.
+
+        `agent` é `system` quando nem o runtime sabe dizer quem agiu (ADR-0018).
+        """
         ...
 
 
@@ -68,3 +72,7 @@ class AgentRuntime(Protocol):
     """Um runtime responde a cada fala do cliente agindo sobre o `AgentHost`."""
 
     async def respond(self, message: str, host: AgentHost) -> None: ...
+
+    async def aclose(self) -> None:
+        """Libera o que o runtime mantém aberto entre turnos (conexão, processo)."""
+        ...

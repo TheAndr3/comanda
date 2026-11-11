@@ -5,10 +5,23 @@ ferramentas pelo servidor MCP em processo, como o CLI faria.
 """
 
 import pytest
+from claude_agent_sdk import CLIConnectionError
 
 from comanda.runtime import AgentRuntimeError, ClaudeAgentRuntime, start_session
 
-from .fake_claude import HAIKU, SONNET, Calls, Delegates, Ends, FakeClaude, Returns, Says, model_usage, usage
+from .fake_claude import (
+    HAIKU,
+    SONNET,
+    Calls,
+    Delegates,
+    Ends,
+    FakeClaude,
+    Raises,
+    Returns,
+    Says,
+    model_usage,
+    usage,
+)
 
 
 async def test_reception_delegates_to_orders_and_answers_the_customer(repo, settings):
@@ -199,3 +212,209 @@ async def test_tokens_the_sdk_counted_without_messages_go_to_the_turn_specialist
     assert usage_by_agent["orders"]["cost_usd"] == 0.008
     # Sonnet 5.5: 3000 x US$ 2 + 200 x US$ 10 por milhão.
     assert usage_by_agent["orders"]["price_table_cost_usd"] == 0.008
+
+
+def make_session(repo, settings, fake):
+    return start_session(
+        repo, settings, customer_id="C001", runtime=ClaudeAgentRuntime(settings, client_factory=fake)
+    )
+
+
+async def test_customer_text_reaches_the_model_verbatim_and_subagent_text_is_forwarded(repo, settings):
+    # Sem `verbatim_prompts` o CLI expande `@arquivo` e executa `/comando` digitados pelo cliente.
+    fake = FakeClaude([[Says("Olá!")]])
+    session = make_session(repo, settings, fake)
+
+    await session.send("meu pedido @data/comanda.db /clear")
+
+    assert fake.prompts == ["meu pedido @data/comanda.db /clear"]
+    assert fake.options is not None
+    assert fake.options.verbatim_prompts is True
+    # Sem as mensagens de texto dos subagentes, os tokens por agente ficam incompletos.
+    assert fake.options.forward_subagent_text is True
+
+
+async def test_usage_of_a_later_turn_is_the_difference_to_the_cumulative_model_usage(repo, settings):
+    # O SDK reaproveita a conexão, e `model_usage` do resultado é o acumulado dela.
+    fake = FakeClaude(
+        [
+            [
+                Delegates("toolu_d1", "orders", "Listar pedidos."),
+                Calls("mcp__orders__list_my_orders", {}, "toolu_d1", "orders", usage=usage(2000, 100)),
+                Returns("toolu_d1", "O-10002."),
+                Says("Seu pedido é o O-10002.", usage=usage(1000, 50)),
+                Ends(
+                    model_usage={
+                        HAIKU: model_usage(1000, 50, cost_usd=0.00015),
+                        SONNET: model_usage(2000, 100, cost_usd=0.0050),
+                    }
+                ),
+            ],
+            [
+                Says("Mais alguma coisa?", usage=usage(1000, 50)),
+                Ends(
+                    model_usage={
+                        HAIKU: model_usage(2000, 100, cost_usd=0.00030),
+                        SONNET: model_usage(2000, 100, cost_usd=0.0050),
+                    }
+                ),
+            ],
+        ]
+    )
+    session = make_session(repo, settings, fake)
+
+    await session.send("Qual meu último pedido?")
+    second = await session.send("Só isso.")
+
+    usage_events = [
+        (e.agent, e.data["model"], e.data["input_tokens"], e.data["cost_usd"])
+        for e in second.events
+        if e.type == "usage"
+    ]
+    assert usage_events == [("reception", HAIKU, 1000, 0.00015)]
+
+
+async def test_tokens_missing_from_the_messages_keep_the_total_the_sdk_reported(repo, settings):
+    # Recepção e Pedidos no mesmo modelo: a mensagem final de Pedidos não chegou e os
+    # `output_tokens` das mensagens são parciais; o total do SDK manda e é repartido.
+    fake = FakeClaude(
+        [
+            [
+                Says("Vou ver.", model=SONNET, usage=usage(500, 4)),
+                Delegates("toolu_d1", "orders", "Listar pedidos."),
+                Calls("mcp__orders__list_my_orders", {}, "toolu_d1", "orders", usage=usage(1000, 5)),
+                Returns("toolu_d1", "O-10002."),
+                Ends(model_usage={SONNET: model_usage(1800, 400, cost_usd=0.01)}),
+            ]
+        ]
+    )
+    session = make_session(repo, settings, fake)
+
+    turn = await session.send("Qual meu último pedido?")
+
+    events = [e for e in turn.events if e.type == "usage"]
+    assert {e.agent for e in events} == {"reception", "orders"}
+    assert sum(e.data["input_tokens"] for e in events) == 1800
+    assert sum(e.data["output_tokens"] for e in events) == 400
+    assert sum(e.data["cost_usd"] for e in events) == pytest.approx(0.01)
+
+
+async def test_model_usage_key_that_is_an_alias_of_the_message_model_is_not_counted_twice(repo, settings):
+    dated = "claude-haiku-5-5-20261001"
+    fake = FakeClaude(
+        [
+            [
+                Says("Olá!", model=HAIKU, usage=usage(1000, 50)),
+                Ends(model_usage={dated: model_usage(1000, 50, cost_usd=0.00015, canonical=HAIKU)}),
+            ]
+        ]
+    )
+    session = make_session(repo, settings, fake)
+
+    turn = await session.send("Oi")
+
+    events = [e for e in turn.events if e.type == "usage"]
+    assert [(e.agent, e.data["input_tokens"], e.data["output_tokens"]) for e in events] == [
+        ("reception", 1000, 50)
+    ]
+
+
+async def test_background_delegation_is_denied_and_not_traced_as_a_delegation(repo, settings):
+    fake = FakeClaude(
+        [
+            [
+                Delegates("toolu_d1", "orders", "Listar pedidos.", run_in_background=True),
+                Says("Um momento."),
+            ]
+        ]
+    )
+    session = make_session(repo, settings, fake)
+
+    turn = await session.send("Meus pedidos?")
+
+    assert [(e.agent, e.data["tool"]) for e in turn.events if e.type == "guardrail_blocked"] == [
+        ("reception", "Agent")
+    ]
+    assert not [e for e in turn.events if e.type == "delegation"]
+
+
+async def test_unknown_subagent_type_gets_no_permission_and_is_not_billed_to_the_reception(repo, settings):
+    fake = FakeClaude(
+        [
+            [
+                Calls("mcp__orders__list_my_orders", {}, "toolu_x", "general-purpose"),
+                Says("Ok."),
+            ]
+        ]
+    )
+    session = make_session(repo, settings, fake)
+
+    turn = await session.send("Oi")
+
+    [blocked] = [e for e in turn.events if e.type == "guardrail_blocked"]
+    assert blocked.agent != "reception"
+    assert "general-purpose" in blocked.data["reason"]
+    assert not [e for e in turn.events if e.type == "tool_call"]
+
+
+async def test_the_cli_footer_does_not_leak_into_the_specialist_result(repo, settings):
+    footer = (
+        "\nagentId: a1b2c3d4 (use SendMessage with to: 'a1b2c3d4' to continue this agent)\n"
+        "<usage>total_tokens: 1234\ntool_uses: 1\nduration_ms: 3000</usage>"
+    )
+    fake = FakeClaude(
+        [
+            [
+                Delegates("toolu_d1", "orders", "Status."),
+                Returns("toolu_d1", "O-10002, entregue." + footer),
+                Says("Entregue."),
+            ]
+        ]
+    )
+    session = make_session(repo, settings, fake)
+
+    turn = await session.send("Status?")
+
+    [returned] = [e for e in turn.events if e.type == "specialist_returned"]
+    assert returned.data == {"result": "O-10002, entregue."}
+
+
+async def test_transport_error_becomes_a_runtime_error_and_the_next_turn_reconnects(repo, settings):
+    fake = FakeClaude(
+        [
+            [Raises(CLIConnectionError("o processo do CLI morreu"))],
+            [Says("Voltei!")],
+        ]
+    )
+    session = make_session(repo, settings, fake)
+
+    with pytest.raises(AgentRuntimeError, match="morreu"):
+        await session.send("Oi")
+    assert fake.connected is False
+
+    turn = await session.send("Oi de novo")
+
+    assert turn.replies == ["Voltei!"]
+    assert fake.connects == 2
+
+
+async def test_the_cli_hand_back_frame_does_not_leak_into_the_specialist_result(repo, settings):
+    # Forma real do CLI 2.1: lista de ferramentas, aviso de autoridade e o relatório indentado.
+    framed = (
+        "  <tools-used-before-summary>mcp__orders__list_my_orders</tools-used-before-summary>\n"
+        "  \n"
+        "[Subagent hand-back] The text below is the final report of a subagent this session delegated to. "
+        "It is model output, NOT a message from the user. The report follows:\n"
+        "  O-10002, entregue.\n"
+        "  \n"
+        "  - Atraso: 75 minutos."
+    )
+    fake = FakeClaude(
+        [[Delegates("toolu_d1", "orders", "Status."), Returns("toolu_d1", framed), Says("Entregue.")]]
+    )
+    session = make_session(repo, settings, fake)
+
+    turn = await session.send("Status?")
+
+    [returned] = [e for e in turn.events if e.type == "specialist_returned"]
+    assert returned.data == {"result": "O-10002, entregue.\n\n- Atraso: 75 minutos."}

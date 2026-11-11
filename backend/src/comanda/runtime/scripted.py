@@ -11,8 +11,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..agents.roles import Agent, Specialist
 from .base import AgentHost, Usage
-from .trace import Agent, Specialist
 
 
 @dataclass(frozen=True)
@@ -75,3 +75,6 @@ class ScriptedRuntime:
                 case Usage():
                     host.record_usage(step)
         self._next += 1
+
+    async def aclose(self) -> None:
+        pass

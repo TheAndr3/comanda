@@ -14,10 +14,10 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
+from ..agents.roles import Agent
+
 SCHEMA_VERSION = 1
 
-Specialist = Literal["orders", "refunds"]
-Agent = Literal["reception", Specialist]
 # Quem age num evento: um agente, o cliente, ou o próprio Atendimento (início e fim).
 Actor = Literal[Agent, "customer", "system"]
 
