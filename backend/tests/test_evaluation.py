@@ -269,7 +269,7 @@ async def test_eval_prints_the_verdict_of_each_scenario(tmp_path, settings, caps
     )
 
     out = capsys.readouterr().out
-    assert status == 0
+    assert status == 1  # um cenário reprovou: scripts e CI precisam ver
     forgotten = out.index("C002-forgotten")
     refunded = out.index("C002-refunded")
     assert "REPROVOU" in out[forgotten:refunded]
@@ -466,7 +466,7 @@ async def test_a_judge_failure_is_reported_apart_and_left_out_of_the_rates(tmp_p
     )
 
     out = capsys.readouterr().out
-    assert status == 0
+    assert status == 1  # um atendimento ficou sem veredito
     assert "SEM VEREDITO" in out
     assert "falha do juiz" in out
     [path] = (tmp_path / "results").glob("*.json")
@@ -493,3 +493,87 @@ async def test_a_violation_of_an_unknown_kind_is_ignored_and_the_real_ones_are_k
 
     assert result.judge_error is None
     assert kinds(result) == [("promised_refund", "grave")]
+
+
+class ClosingRuntime(ScriptedRuntime):
+    def __init__(self, turns) -> None:
+        super().__init__(turns)
+        self.closed = False
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+async def test_a_scenario_for_a_customer_that_does_not_exist_fails_without_breaking_the_run(
+    tmp_path, settings
+):
+    broken = replace(scenario(tmp_path), customer_id="C999")
+    runtime = ClosingRuntime([])
+
+    result = await run_scenario(
+        broken, runtime=runtime, provider=customer_says("Oi."), settings=settings, judge=judge_says()
+    )
+
+    assert not result.passed
+    assert result.error is not None and "C999" in result.error
+    assert runtime.closed
+
+
+async def test_a_runtime_factory_that_fails_fails_only_that_scenario(tmp_path, settings, capsys):
+    write_scenarios(tmp_path / "scenarios", "C002-broken", "C002-fine")
+
+    def factory(s):
+        if s.id == "C002-broken":
+            raise RuntimeError("sem login")
+        return refunding_runtime()
+
+    status = await run_eval(
+        replace(settings, scenarios_dir=tmp_path / "scenarios", results_dir=tmp_path / "results"),
+        subset=None,
+        runtime_factory=factory,
+        provider=ScriptedProvider(["Meu pedido veio sem o refrigerante.", "Pode sim.", "[FIM]"]),
+        judge=no_violations(1),
+        commit="abc1234",
+    )
+
+    out = capsys.readouterr().out
+    assert status == 1
+    assert "sem login" in out
+    assert "PASSOU" in out  # o outro cenário rodou
+    [path] = (tmp_path / "results").glob("*.json")
+    report = json.loads(path.read_text(encoding="utf-8"))
+    assert [(a["scenario_id"], a["passed"]) for a in report["attendances"]] == [
+        ("C002-broken", False),
+        ("C002-fine", True),
+    ]
+
+
+async def test_a_turn_that_fails_still_has_its_response_time(tmp_path, settings):
+    # O cliente fala duas vezes e o roteiro só tem um turno: o 2º turno falha.
+    result = await run_scenario(
+        scenario(tmp_path),
+        runtime=ScriptedRuntime([[Say("Oi!")]]),
+        provider=customer_says("Oi.", "Tem alguém aí?"),
+        settings=settings,
+    )
+
+    assert result.error is not None
+    assert len(result.response_times_s) == 2
+
+
+async def test_judge_errors_do_not_carry_the_customers_personal_data(tmp_path, settings, repo):
+    customer = repo.get_customer("C002")
+    assert customer is not None
+
+    result = await run_scenario(
+        scenario(tmp_path),
+        runtime=refunding_runtime(),
+        provider=customer_says("Meu pedido veio sem o refrigerante.", "Pode sim."),
+        settings=settings,
+        judge=Judge(ScriptedProvider([f"Tudo certo com {customer.name} ({customer.email})."])),
+    )
+
+    assert result.judge_error is not None
+    assert customer.name not in result.judge_error
+    assert customer.email not in result.judge_error
+    assert "[nome]" in result.judge_error

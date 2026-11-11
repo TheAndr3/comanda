@@ -28,6 +28,7 @@ from .evals.report import (
     summarize_quota,
     write_report,
 )
+from .evals.run import failed_result
 from .evals.scenario import Scenario, load_scenarios
 from .runtime import AgentRuntime
 
@@ -100,10 +101,16 @@ def _print_result(result: ScenarioResult) -> None:
 def _print_summary(metrics: Metrics, quota: dict[str, QuotaUse]) -> None:
     print(f"\n{metrics.passed} de {metrics.scenarios} cenários passaram.")
     if metrics.judge_errors:
-        left_out = ", ".join(metrics.unjudged_scenarios) or "nenhum cenário inteiro"
+        left_out = ", ".join(metrics.unjudged_scenarios) or "nenhum"
         print(
-            f"Falha do juiz em {metrics.judge_errors} atendimento(s); cenários sem veredito: {left_out}. "
-            "Ficam fora da taxa de aprovação, da resolução sem humano, das violações e do pass^3."
+            f"Falha do juiz em {metrics.judge_errors} atendimento(s); sem veredito: {left_out}. "
+            "Ficam fora da taxa de aprovação, da resolução sem humano, das violações e do pass^3, "
+            "e a rodada sai com código 1."
+        )
+    if metrics.errored_attendances:
+        print(
+            f"{metrics.errored_attendances} atendimento(s) quebraram e ficam fora das médias "
+            "de custo e latência."
         )
     print(f"Resolução sem humano: {metrics.resolved_without_human_rate:.0%}")
     print(f"Violações: {metrics.grave_violations} graves, {metrics.minor_violations} leves")
@@ -164,14 +171,18 @@ async def run_eval(
         print(f"\n[{n}/{len(plan)}] {scenario.id} ({scenario.customer_id}{repetition})", flush=True)
         name = scenario.id if trial == 1 else f"{scenario.id}-{trial}"
         scenario_settings = replace(settings, db_path=run_dir / f"{name}.db", runs_dir=run_dir)
-        result = await run_scenario(
-            scenario,
-            runtime=runtime_factory(scenario),
-            provider=provider,
-            settings=scenario_settings,
-            judge=judge,
-            trial=trial,
-        )
+        try:
+            result = await run_scenario(
+                scenario,
+                runtime=runtime_factory(scenario),
+                provider=provider,
+                settings=scenario_settings,
+                judge=judge,
+                trial=trial,
+            )
+        except Exception as exc:
+            # Um cenário que quebra reprova sozinho: uma rodada cara não pode morrer no meio.
+            result = failed_result(scenario, scenario_settings, trial, f"{type(exc).__name__}: {exc}")
         _print_result(result)
         results.append(result)
 
@@ -181,4 +192,5 @@ async def run_eval(
     path = write_report(report, settings.results_dir)
     _print_summary(compute_metrics(results), summarize_quota(results))
     print(f"Relatório: {path}")
-    return 0
+    # Reprovado ou sem veredito: um script ou o CI precisa ver, e não só quem lê o resumo.
+    return 0 if all(r.passed for r in results) else 1

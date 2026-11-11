@@ -8,6 +8,7 @@ violação grave reprova o cenário mesmo com o estado certo (ADR-0011).
 
 from __future__ import annotations
 
+import contextlib
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,6 +16,7 @@ from pathlib import Path
 from ..config import Settings
 from ..data.seed import seed_database
 from ..runtime import AgentRuntime, EventType, QuotaReading, TraceEvent, start_session
+from ..runtime.masking import PersonalDataMask
 from .judge import Judge, Violation, guardrail_violations
 from .providers import Provider
 from .scenario import Scenario
@@ -92,6 +94,21 @@ class ScenarioResult:
         return sum(1 for line in self.transcript if line.role == "customer")
 
 
+def failed_result(
+    scenario: Scenario, settings: Settings, trial: int, error: str, session_id: str = "(sem atendimento)"
+) -> ScenarioResult:
+    """O resultado de um cenário que nem chegou a conversar: reprova só ele, sem derrubar a rodada."""
+    return ScenarioResult(
+        scenario_id=scenario.id,
+        customer_id=scenario.customer_id,
+        session_id=session_id,
+        trace_path=settings.runs_dir,
+        mismatches=[],
+        error=error,
+        trial=trial,
+    )
+
+
 async def run_scenario(
     scenario: Scenario,
     *,
@@ -106,12 +123,20 @@ async def run_scenario(
     repo = seed_database(settings.db_path)
     baseline = take_baseline(repo)
     customer = repo.get_customer(scenario.customer_id)
-    if customer is None:
-        raise ValueError(
-            f"O cenário {scenario.id} referencia o cliente {scenario.customer_id}, que não existe."
-        )
-    simulated = SimulatedCustomer(scenario, customer.name.split()[0], provider)
-    session = start_session(repo, settings, scenario.customer_id, runtime)
+    try:
+        if customer is None:
+            raise ValueError(
+                f"O cenário {scenario.id} referencia o cliente {scenario.customer_id}, que não existe."
+            )
+        simulated = SimulatedCustomer(scenario, customer.name.split()[0], provider)
+        session = start_session(repo, settings, scenario.customer_id, runtime)
+    except Exception as exc:
+        # Cenário quebrado: fecha o runtime e reprova só ele; os outros da rodada seguem.
+        with contextlib.suppress(Exception):  # o erro que vale é o de montagem
+            await runtime.aclose()
+        return failed_result(scenario, settings, trial, f"{type(exc).__name__}: {exc}")
+    # Mensagens de erro podem citar a fala ou os dados do cliente: mascara como o Rastro.
+    mask = PersonalDataMask(customer)
 
     transcript: list[TranscriptLine] = []
     response_times_s: list[float] = []
@@ -126,12 +151,15 @@ async def run_scenario(
                 break
             transcript.append(TranscriptLine("customer", message))
             sent = time.monotonic()
-            turn = await session.send(message)
-            response_times_s.append(time.monotonic() - sent)
+            try:
+                turn = await session.send(message)
+            finally:
+                # Também o turno que falhou: sem isso as médias de latência saem parciais.
+                response_times_s.append(time.monotonic() - sent)
             transcript.append(TranscriptLine("system", "\n\n".join(turn.replies) or NO_REPLY))
     except Exception as exc:
         # Uma falha num cenário reprova esse cenário, sem derrubar a rodada inteira.
-        error = f"{type(exc).__name__}: {exc}"
+        error = mask.apply(f"{type(exc).__name__}: {exc}")
     finally:
         try:
             session.close()  # primeiro: o Rastro registra o fim mesmo que o runtime falhe ao fechar
@@ -145,7 +173,7 @@ async def run_scenario(
         try:
             violations += await judge.review(customer, transcript, session.events)
         except Exception as exc:
-            judge_error = f"{type(exc).__name__}: {exc}"
+            judge_error = mask.apply(f"{type(exc).__name__}: {exc}")
 
     return ScenarioResult(
         scenario_id=scenario.id,

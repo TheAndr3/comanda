@@ -89,13 +89,22 @@ class GeminiProvider:
         }
         headers = {"x-goog-api-key": self._key, "Content-Type": "application/json"}
         url = GEMINI_URL.format(model=self.model)
+        # Backoff curto e limitado (1 s, 2 s, 4 s...) para 429, 5xx passageiro e queda de conexão.
+        response: httpx.Response | None = None
+        failure = "sem resposta"
         async with httpx.AsyncClient(transport=self._transport, timeout=60) as client:
-            response = await client.post(url, json=body, headers=headers)
-            for attempt in range(self._max_retries):
+            for attempt in range(self._max_retries + 1):
+                if attempt:
+                    await asyncio.sleep(2 ** (attempt - 1))
+                try:
+                    response = await client.post(url, json=body, headers=headers)
+                except httpx.TransportError as exc:
+                    response, failure = None, str(exc) or type(exc).__name__
+                    continue
                 if response.status_code not in _RETRY_STATUS:
                     break
-                await asyncio.sleep(2**attempt)
-                response = await client.post(url, json=body, headers=headers)
+        if response is None:
+            raise ProviderError(f"Gemini inacessível: {failure}")
         if response.status_code != 200:
             raise ProviderError(f"Gemini respondeu {response.status_code}: {response.text[:300]}")
         return _gemini_text(response.json())

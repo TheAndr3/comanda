@@ -14,3 +14,12 @@ Cada rodada, completa ou não, grava `evals/results/<data>-<commit>.json` com da
 - O `-dirty` do commit do relatório ignora arquivos não rastreados, senão o relatório da rodada anterior, ainda não commitado, marcaria todos os seguintes.
 
 Segunda revisão do PR #20: um tipo de violação desconhecido na resposta do juiz é ignorado e registrado no log, sem derrubar as outras violações da mesma resposta. No pass^3, um atendimento reprovado com veredito garante pass^3 igual a zero mesmo que outro tenha ficado sem veredito; o cenário só sai da conta quando nenhum atendimento julgado reprovou e algum ficou sem veredito. Nas taxas, o atendimento do cenário é o primeiro que tem veredito, e `failed_scenarios` e `unjudged_scenarios` olham todos os atendimentos.
+
+## Endurecimento para a rodada completa (issue #21)
+
+- Um cenário quebrado não derruba a rodada: cliente inexistente, `start_session` ou a fábrica do runtime que falham reprovam só aquele cenário (`error`), e o runtime é fechado.
+- `comanda eval` sai com código 1 se algum atendimento reprovou ou ficou sem veredito, para scripts e CI.
+- O resumo de violações conta todos os atendimentos lidos pelo juiz, não só o primeiro: uma grave na repetição 2 derruba o pass^3 e precisa aparecer. `unjudged_scenarios` nomeia cada atendimento sem veredito, com `(repetição N)` nos trials 2 e 3.
+- O turno que falhou registra o seu tempo, e os atendimentos que quebraram (`error`) ficam fora das médias de custo e latência (`errored_attendances` os conta); os tokens por modelo somam tudo, porque o consumo foi real.
+- `error` e `judge_error` passam pela máscara de dados pessoais do cliente, porque citam trechos da resposta do juiz ou da conversa.
+- O `GeminiProvider` repete 429, 5xx passageiro e queda de conexão com backoff de 1 s, 2 s, 4 s... e no máximo `max_retries` repetições; esgotadas, vira `ProviderError`.

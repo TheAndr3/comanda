@@ -56,3 +56,58 @@ async def test_gemini_error_status_becomes_provider_error():
 
     with pytest.raises(ProviderError, match="400"):
         await provider.complete("sistema", [ProviderMessage("user", "oi")])
+
+
+@pytest.fixture
+def no_backoff(monkeypatch):
+    waits: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        waits.append(seconds)
+
+    monkeypatch.setattr("comanda.evals.providers.asyncio.sleep", fake_sleep)
+    return waits
+
+
+async def test_gemini_retries_a_429_with_a_short_growing_backoff_and_then_answers(no_backoff):
+    answers = iter([429, 429, 200])
+
+    def handle(_: httpx.Request) -> httpx.Response:
+        if next(answers) == 429:
+            return httpx.Response(429, json={"error": {"message": "limite"}})
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "Oi."}]}}]})
+
+    provider = GeminiProvider("gemini-test", api_key=FAKE_KEY, transport=httpx.MockTransport(handle))
+
+    assert await provider.complete("sistema", [ProviderMessage("user", "oi")]) == "Oi."
+    assert no_backoff == [1, 2]
+
+
+async def test_gemini_gives_up_after_a_bounded_number_of_retries(no_backoff):
+    calls: list[int] = []
+
+    def handle(_: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(429, json={"error": {"message": "limite"}})
+
+    provider = GeminiProvider(
+        "gemini-test", api_key=FAKE_KEY, transport=httpx.MockTransport(handle), max_retries=3
+    )
+
+    with pytest.raises(ProviderError, match="429"):
+        await provider.complete("sistema", [ProviderMessage("user", "oi")])
+    assert len(calls) == 4  # a chamada e 3 repetições
+    assert sum(no_backoff) <= 10
+
+
+async def test_gemini_retries_a_dropped_connection_and_reports_it_as_a_provider_error(no_backoff):
+    def handle(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("sem rede", request=request)
+
+    provider = GeminiProvider(
+        "gemini-test", api_key=FAKE_KEY, transport=httpx.MockTransport(handle), max_retries=2
+    )
+
+    with pytest.raises(ProviderError, match="sem rede"):
+        await provider.complete("sistema", [ProviderMessage("user", "oi")])
+    assert no_backoff == [1, 2]
