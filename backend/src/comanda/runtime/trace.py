@@ -14,10 +14,10 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
+from ..agents.roles import Agent
+
 SCHEMA_VERSION = 1
 
-Specialist = Literal["orders", "refunds"]
-Agent = Literal["reception", Specialist]
 # Quem age num evento: um agente, o cliente, ou o próprio Atendimento (início e fim).
 Actor = Literal[Agent, "customer", "system"]
 
@@ -30,7 +30,8 @@ class EventType(StrEnum):
     SPECIALIST_RETURNED = "specialist_returned"
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
-    # Ainda sem emissor: o hook de elegibilidade (ADR-0008) entra em outro ticket.
+    # Hoje emitido quando um agente tenta uma ferramenta fora do seu papel (ADR-0013); o hook
+    # de elegibilidade (ADR-0008) entra em outro ticket.
     GUARDRAIL_BLOCKED = "guardrail_blocked"
     ESCALATION = "escalation"
     USAGE = "usage"

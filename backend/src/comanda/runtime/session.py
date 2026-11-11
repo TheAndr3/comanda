@@ -9,14 +9,16 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
+from ..agents.roles import AGENT_TOOLS, Agent, Specialist
 from ..config import Settings
 from ..domain.db import Repository
 from ..tools import ToolContext, run_tool
 from .base import AgentRuntime, Usage
 from .masking import PersonalDataMask
-from .trace import Actor, Agent, EventType, Specialist, TraceEvent, TraceWriter
+from .trace import Actor, EventType, TraceEvent, TraceWriter
 
 
 class SessionClosed(Exception):
@@ -41,6 +43,8 @@ class Session:
         self._ctx = ToolContext(repo=repo, settings=settings, customer_id=customer_id)
         self._runtime = runtime
         self._turn: Turn | None = None
+        # O turno mais recente, também quando o runtime falhou no meio dele.
+        self.last_turn: Turn | None = None
         self._call_seq = 0
         self.closed = False
         self._writer = TraceWriter(settings.runs_dir, self.id)
@@ -50,7 +54,7 @@ class Session:
     async def send(self, message: str) -> Turn:
         if self.closed:
             raise SessionClosed(f"O atendimento {self.id} já foi encerrado.")
-        self._turn = Turn()
+        self._turn = self.last_turn = Turn()
         self._record("customer", EventType.CUSTOMER_MESSAGE, {"text": message})
         turn = self._turn
         try:
@@ -58,6 +62,11 @@ class Session:
         finally:
             self._turn = None
         return turn
+
+    @property
+    def trace_path(self) -> Path:
+        """O arquivo JSONL do Rastro deste atendimento."""
+        return self._writer.path
 
     def close(self) -> None:
         if not self.closed:
@@ -92,6 +101,10 @@ class Session:
         self._record(specialist, EventType.SPECIALIST_RETURNED, {"result": result})
 
     def call_tool(self, agent: Agent, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        if name not in AGENT_TOOLS[agent]:  # ADR-0013, aplicado aqui para qualquer runtime (ADR-0017)
+            reason = f"A ferramenta {name} não pertence a este agente."
+            self.guardrail_blocked(agent, "agent_tools", name, args, reason)
+            return {"error": reason}
         self._call_seq += 1
         call_id = f"call-{self._call_seq}"
         self._record(agent, EventType.TOOL_CALL, {"call_id": call_id, "tool": name, "args": args})
@@ -121,8 +134,20 @@ class Session:
                 "model": usage.model,
                 "input_tokens": usage.input_tokens,
                 "output_tokens": usage.output_tokens,
+                "cache_read_tokens": usage.cache_read_tokens,
+                "cache_write_tokens": usage.cache_write_tokens,
                 "cost_usd": usage.cost_usd,
+                "price_table_cost_usd": usage.price_table_cost_usd,
             },
+        )
+
+    def guardrail_blocked(
+        self, agent: Actor, guardrail: str, tool: str, args: dict[str, Any], reason: str
+    ) -> None:
+        self._record(
+            agent,
+            EventType.GUARDRAIL_BLOCKED,
+            {"guardrail": guardrail, "tool": tool, "args": args, "reason": reason},
         )
 
 

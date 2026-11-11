@@ -10,15 +10,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .trace import Agent, Specialist
+from ..agents.roles import Agent, Specialist
+from .trace import Actor
 
 
 @dataclass(frozen=True)
 class Usage:
-    """Tokens de uma chamada de modelo e, se o provedor informar, o custo estimado.
+    """Tokens de um agente num modelo e o custo equivalente em API (ADR-0014).
 
-    O custo é uma estimativa em dólares com frações de centavo (ADR-0014), não dinheiro do
-    domínio; por isso é `float`, e não centavos inteiros.
+    `cost_usd` é o custo usado nos relatórios: o que o SDK informou, quando informa, ou o da
+    tabela pública. `price_table_cost_usd` é sempre o cálculo pela tabela, para conferir o
+    valor do SDK. Os dois são estimativas em dólares com frações de centavo, não dinheiro do
+    domínio; por isso são `float`, e não centavos inteiros. `input_tokens` não inclui os
+    tokens lidos ou gravados no cache, que têm preço próprio.
     """
 
     agent: Agent
@@ -26,6 +30,9 @@ class Usage:
     input_tokens: int
     output_tokens: int
     cost_usd: float | None = None
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    price_table_cost_usd: float | None = None
 
 
 class AgentHost(Protocol):
@@ -51,8 +58,21 @@ class AgentHost(Protocol):
         """Registra tokens e custo de uma chamada de modelo."""
         ...
 
+    def guardrail_blocked(
+        self, agent: Actor, guardrail: str, tool: str, args: dict[str, Any], reason: str
+    ) -> None:
+        """Registra uma ação que um guardrail impediu antes de a ferramenta rodar.
+
+        `agent` é `system` quando nem o runtime sabe dizer quem agiu (ADR-0018).
+        """
+        ...
+
 
 class AgentRuntime(Protocol):
     """Um runtime responde a cada fala do cliente agindo sobre o `AgentHost`."""
 
     async def respond(self, message: str, host: AgentHost) -> None: ...
+
+    async def aclose(self) -> None:
+        """Libera o que o runtime mantém aberto entre turnos (conexão, processo)."""
+        ...
