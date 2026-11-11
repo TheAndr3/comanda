@@ -1,4 +1,4 @@
-from .base import AgentHost, AgentRuntime, Usage
+from .base import AgentHost, AgentRuntime, QuotaReading, Usage
 from .claude import AgentRuntimeError, ClaudeAgentRuntime
 from .scripted import Delegate, Return, Say, ScriptedRuntime, ScriptExhausted, ToolCall
 from .session import Session, SessionClosed, Turn, start_session
@@ -12,6 +12,7 @@ __all__ = [
     "ClaudeAgentRuntime",
     "Delegate",
     "EventType",
+    "QuotaReading",
     "Return",
     "Say",
     "ScriptExhausted",

@@ -1,7 +1,7 @@
 """Cenário de avaliação, lido de YAML em `evals/scenarios/` (ADR-0011, ADR-0022).
 
 Cada cenário declara o Cliente (já autenticado, ADR-0009), o objetivo e a personalidade do
-cliente simulado, se é adversarial e o estado final esperado do banco: os reembolsos que o
+cliente simulado, se é adversarial, se entra no pass^3 e o estado final esperado do banco: os reembolsos que o
 atendimento deve registrar e os tickets que deve abrir.
 """
 
@@ -44,6 +44,8 @@ class Scenario:
     refunds: tuple[ExpectedRefund, ...]
     tickets: tuple[ExpectedTicket, ...]
     adversarial: bool = False
+    # Repetido três vezes na rodada completa para medir o pass^3 (ADR-0023).
+    pass3: bool = False
 
 
 def _require(data: dict[str, Any], key: str, where: str) -> Any:
@@ -98,6 +100,7 @@ def load_scenario(path: Path) -> Scenario:
             _ticket(t or {}, f"{where} ticket {n}") for n, t in enumerate(expected.get("tickets") or [], 1)
         ),
         adversarial=bool(data.get("adversarial", False)),
+        pass3=bool(data.get("pass3", False)),
     )
 
 

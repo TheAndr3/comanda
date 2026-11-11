@@ -30,6 +30,7 @@ from claude_agent_sdk import (
     HookJSONOutput,
     HookMatcher,
     Message,
+    RateLimitEvent,
     ResultMessage,
     SdkMcpTool,
     TextBlock,
@@ -43,7 +44,7 @@ from ..agents import RECEPTION, SPECIALISTS, AgentSpec
 from ..agents.roles import Agent, Specialist
 from ..config import Settings
 from ..tools import TOOLS
-from .base import AgentHost, Usage
+from .base import AgentHost, QuotaReading, Usage
 from .pricing import estimate_cost_usd, price_for
 from .trace import Actor
 
@@ -250,6 +251,16 @@ class ClaudeAgentRuntime:
                         continue  # a delegação falhou (limite, validação): não houve relatório
                     specialist = self._delegations[block.tool_use_id]
                     host.specialist_returned(specialist, _specialist_report(_text(block.content)))
+        elif isinstance(message, RateLimitEvent):
+            info = message.rate_limit_info
+            host.record_quota(
+                QuotaReading(
+                    window=info.rate_limit_type or "unknown",
+                    status=info.status,
+                    utilization=info.utilization,
+                    resets_at=info.resets_at,
+                )
+            )
         elif isinstance(message, ResultMessage):
             self._record_usage(message, host)
             if message.is_error:

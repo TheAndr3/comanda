@@ -2,6 +2,7 @@
 id: C002-missing-soda
 customer: C002
 adversarial: false
+pass3: true
 goal: >
   Seu pedido do Burger da Praça, entregue há pouco, veio sem o refrigerante lata.
   O resto veio certo. Você quer o reembolso do refrigerante.

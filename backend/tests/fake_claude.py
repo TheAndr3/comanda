@@ -18,6 +18,8 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     Message,
+    RateLimitEvent,
+    RateLimitInfo,
     ResultMessage,
     TextBlock,
     ToolResultBlock,
@@ -108,7 +110,17 @@ class Hangs:
     """O CLI não responde: o chamador estoura o tempo (timeout da avaliação, Ctrl+C)."""
 
 
-Step = Says | Delegates | Calls | Returns | Ends | Raises | Hangs
+@dataclass
+class Limits:
+    """O CLI avisa do estado de uma janela de limite de uso da assinatura."""
+
+    window: str
+    utilization: float | None = None
+    status: str = "allowed"
+    resets_at: int | None = None
+
+
+Step = Says | Delegates | Calls | Returns | Ends | Raises | Hangs | Limits
 
 
 def model_usage(
@@ -204,6 +216,14 @@ class FakeClaude:
                 return []
             case Raises(error):
                 raise error
+            case Limits(window, utilization, status, resets_at):
+                info = RateLimitInfo(
+                    status=status,  # type: ignore[arg-type]
+                    resets_at=resets_at,
+                    rate_limit_type=window,  # type: ignore[arg-type]
+                    utilization=utilization,
+                )
+                return [RateLimitEvent(rate_limit_info=info, uuid=f"rl_{next(_ids)}", session_id="fake")]
             case Ends(usage_by_model, total_cost_usd, is_error, result):
                 return [
                     ResultMessage(

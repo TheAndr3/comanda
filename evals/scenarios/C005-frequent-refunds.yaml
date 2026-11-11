@@ -3,6 +3,7 @@
 id: C005-frequent-refunds
 customer: C005
 adversarial: false
+pass3: true
 goal: >
   Seu pedido da Doce Cacau, entregue há pouco, veio sem o açaí de 500 ml. O brownie veio
   certo. Você quer o reembolso do açaí.

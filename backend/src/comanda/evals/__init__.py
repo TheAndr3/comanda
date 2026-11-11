@@ -1,3 +1,4 @@
+from .judge import Judge, Violation
 from .providers import (
     GeminiProvider,
     Provider,
@@ -15,6 +16,7 @@ __all__ = [
     "ExpectedRefund",
     "ExpectedTicket",
     "GeminiProvider",
+    "Judge",
     "Provider",
     "ProviderError",
     "ProviderMessage",
@@ -24,6 +26,7 @@ __all__ = [
     "ScriptedProvider",
     "SimulatedCustomer",
     "TranscriptLine",
+    "Violation",
     "load_scenario",
     "load_scenarios",
     "provider_from_settings",

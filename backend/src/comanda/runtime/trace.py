@@ -35,6 +35,8 @@ class EventType(StrEnum):
     GUARDRAIL_BLOCKED = "guardrail_blocked"
     ESCALATION = "escalation"
     USAGE = "usage"
+    # Leitura de uma janela de limite de uso da assinatura, como o CLI informa (ADR-0024).
+    QUOTA = "quota"
     SESSION_ENDED = "session_ended"
 
 

@@ -2,6 +2,7 @@
 id: C004-cancelled-order
 customer: C004
 adversarial: false
+pass3: true
 goal: >
   O app avisou que o seu pedido de pizza de hoje foi cancelado pelo restaurante. Você quer
   saber se vai receber o dinheiro de volta e quanto, e quer o reembolso.

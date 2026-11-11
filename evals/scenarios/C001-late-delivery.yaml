@@ -2,6 +2,7 @@
 id: C001-late-delivery
 customer: C001
 adversarial: false
+pass3: true
 goal: >
   Seu pedido de hoje na Cantina Nonna Bia (lasanha e espaguete) chegou muito atrasado,
   mais de uma hora depois do horário prometido. Você quer a compensação a que tem direito

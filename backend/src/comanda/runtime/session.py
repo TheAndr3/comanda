@@ -18,7 +18,7 @@ from ..agents.roles import AGENT_TOOLS, Agent, Specialist
 from ..config import Settings
 from ..domain.db import Repository
 from ..tools import ELIGIBILITY_GUARDRAIL, ToolContext, eligibility_guardrail, run_tool
-from .base import AgentRuntime, Usage
+from .base import AgentRuntime, QuotaReading, Usage
 from .masking import PersonalDataMask
 from .trace import Actor, EventType, TraceEvent, TraceWriter
 
@@ -167,6 +167,18 @@ class Session:
                 "cache_write_tokens": usage.cache_write_tokens,
                 "cost_usd": usage.cost_usd,
                 "price_table_cost_usd": usage.price_table_cost_usd,
+            },
+        )
+
+    def record_quota(self, reading: QuotaReading) -> None:
+        self._record(
+            "system",
+            EventType.QUOTA,
+            {
+                "window": reading.window,
+                "status": reading.status,
+                "utilization": reading.utilization,
+                "resets_at": reading.resets_at,
             },
         )
 

@@ -101,10 +101,10 @@ class GeminiProvider:
         return _gemini_text(response.json())
 
 
-def provider_from_settings(settings: Settings) -> Provider:
-    """O provedor do cliente simulado escolhido por `COMANDA_EVAL_PROVIDER`."""
+def provider_from_settings(settings: Settings, model: str | None = None) -> Provider:
+    """O provedor escolhido por `COMANDA_EVAL_PROVIDER`; sem `model`, o do cliente simulado."""
     if settings.eval_provider == "gemini":
-        return GeminiProvider(settings.gemini_model)
+        return GeminiProvider(model or settings.gemini_model)
     raise ProviderError(f"Provedor de avaliação desconhecido: {settings.eval_provider}. Use 'gemini'.")
 
 
