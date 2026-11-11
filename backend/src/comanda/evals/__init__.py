@@ -1,4 +1,4 @@
-from .judge import Judge, Violation
+from .judge import Judge, JudgeReview, Violation
 from .providers import (
     GeminiProvider,
     Provider,
@@ -17,6 +17,7 @@ __all__ = [
     "ExpectedTicket",
     "GeminiProvider",
     "Judge",
+    "JudgeReview",
     "Provider",
     "ProviderError",
     "ProviderMessage",

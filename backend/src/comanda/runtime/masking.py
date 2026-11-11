@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Any
+from collections.abc import Iterable
+from typing import Any, Protocol
 
 from ..domain.models import Customer
 
@@ -54,4 +55,29 @@ class PersonalDataMask:
             return {key: self.apply(item) for key, item in value.items()}
         if isinstance(value, list | tuple):
             return [self.apply(item) for item in value]
+        return value
+
+
+class _Repo(Protocol):
+    def list_customer_ids(self) -> list[str]: ...
+    def get_customer(self, customer_id: str) -> Customer | None: ...
+
+
+class CustomersMask:
+    """Mascara os dados pessoais de todos os clientes de um banco.
+
+    O Rastro só mascara o cliente do atendimento. Um texto que vai a um relatório versionado, como
+    o trecho de uma violação `other_customer_data`, pode citar outro cliente; aqui nenhum aparece.
+    """
+
+    def __init__(self, customers: Iterable[Customer] = ()) -> None:
+        self._masks = [PersonalDataMask(c) for c in customers]
+
+    @classmethod
+    def of(cls, repo: _Repo) -> CustomersMask:
+        return cls(c for cid in repo.list_customer_ids() if (c := repo.get_customer(cid)) is not None)
+
+    def apply(self, value: Any) -> Any:
+        for mask in self._masks:
+            value = mask.apply(value)
         return value

@@ -1,8 +1,10 @@
 """Métricas e relatório de uma rodada de avaliação (ADR-0011, ADR-0014, ADR-0015, ADR-0023).
 
-As taxas e contagens por cenário usam o primeiro atendimento de cada cenário, para que as
-repetições do pass^3 não pesem mais que os outros cenários. Custo e latência são médias por
-atendimento e usam todos os atendimentos da rodada.
+As taxas por cenário usam o primeiro atendimento com veredito de cada cenário (se o 1º ficou
+sem veredito por falha do juiz, vale o seguinte), para que as repetições do pass^3 não pesem
+mais que os outros cenários. As violações contam todos os
+atendimentos lidos pelo juiz. Custo e latência são médias por atendimento e usam os
+atendimentos que terminaram sem erro.
 """
 
 from __future__ import annotations
@@ -39,14 +41,26 @@ class Metrics:
     pass3: float | None
     pass3_scenarios: int
     failed_scenarios: list[str] = field(default_factory=list)
-    # Atendimentos em que o juiz falhou, e os cenários que por isso ficaram sem veredito: fora da
-    # taxa de aprovação, da resolução sem humano, das violações e do pass^3.
+    # Atendimentos em que o juiz falhou (`judge_errors`) e quais são (`unjudged_scenarios`). Um
+    # cenário sem nenhum atendimento com veredito fica fora da taxa de aprovação e da resolução sem
+    # humano; um atendimento sem veredito não conta nas violações; no pass^3, um cenário com lacuna
+    # só sai da conta se nenhum atendimento julgado reprovou, senão vale 0.
     judge_errors: int = 0
     unjudged_scenarios: list[str] = field(default_factory=list)
+    # Atendimentos que quebraram (erro do runtime ou do provedor): fora das médias de custo e latência.
+    errored_attendances: int = 0
+    # Tipos de violação que o juiz inventou e foram ignorados, com a contagem.
+    ignored_judge_kinds: dict[str, int] = field(default_factory=dict)
+    # Custo equivalente em API de todos os atendimentos da rodada, inclusive os que quebraram (ADR-0014).
+    total_cost_usd: float = 0.0
 
 
 def _mean(values: Sequence[float]) -> float:
     return round(sum(values) / len(values), 6) if values else 0.0
+
+
+def _label(r: ScenarioResult) -> str:
+    return r.scenario_id if r.trial == 1 else f"{r.scenario_id} (repetição {r.trial})"
 
 
 def _has_verdict(attendances: Sequence[ScenarioResult]) -> bool:
@@ -64,7 +78,9 @@ def compute_metrics(results: Sequence[ScenarioResult]) -> Metrics:
     # O atendimento de cada cenário nas taxas é o primeiro que tem veredito: se o 1º ficou sem
     # (falha do juiz), vale o seguinte, e o cenário só sai das contas sem nenhum veredito.
     first = [next(r for r in rs if not r.inconclusive) for rs in trials.values() if _has_verdict(rs)]
-    violations = [v for r in first for v in r.violations]
+    # Violações de todos os atendimentos lidos: uma grave na repetição 2 derruba o pass^3 e tem
+    # de aparecer no resumo.
+    violations = [v for r in results if not r.inconclusive for v in r.violations]
 
     # pass^3: um atendimento reprovado com veredito garante 0, mesmo que outro tenha ficado sem
     # veredito; só sai da conta quando nenhum reprovou e algum não foi lido.
@@ -80,7 +96,9 @@ def compute_metrics(results: Sequence[ScenarioResult]) -> Metrics:
         for model, t in r.tokens_by_model.items():
             tokens[model] = tokens.get(model, Tokens()) + t
 
-    turn_times = [t for r in results for t in r.response_times_s]
+    # Custo e latência são médias dos atendimentos que terminaram: um que quebrou tem valores parciais.
+    complete = [r for r in results if r.error is None]
+    turn_times = [t for r in complete for t in r.response_times_s]
     return Metrics(
         scenarios=len(first),
         attendances=len(results),
@@ -89,15 +107,18 @@ def compute_metrics(results: Sequence[ScenarioResult]) -> Metrics:
         grave_violations=sum(v.severity == "grave" for v in violations),
         minor_violations=sum(v.severity == "leve" for v in violations),
         violations_by_kind=dict(sorted(Counter(v.kind for v in violations).items())),
-        mean_cost_usd=_mean([r.cost_usd for r in results]),
+        mean_cost_usd=_mean([r.cost_usd for r in complete]),
         tokens_by_model=dict(sorted(tokens.items())),
-        mean_latency_s=_mean([sum(r.response_times_s) for r in results]),
+        mean_latency_s=_mean([sum(r.response_times_s) for r in complete]),
         mean_turn_latency_s=_mean(turn_times),
         pass3=_mean([float(all(r.passed for r in rs[:PASS_K])) for rs in repeated]) if repeated else None,
         pass3_scenarios=len(repeated),
         failed_scenarios=[r.scenario_id for r in first if not r.passed],
         judge_errors=sum(r.judge_error is not None for r in results),
-        unjudged_scenarios=[sid for sid, rs in trials.items() if not _has_verdict(rs)],
+        unjudged_scenarios=[_label(r) for r in results if r.inconclusive],
+        errored_attendances=sum(r.error is not None for r in results),
+        total_cost_usd=round(sum(r.cost_usd for r in results), 6),
+        ignored_judge_kinds=dict(sorted(Counter(k for r in results for k in r.ignored_judge_kinds).items())),
     )
 
 
@@ -155,6 +176,7 @@ def _attendance(r: ScenarioResult) -> dict[str, Any]:
         "ended_by_customer": r.ended_by_customer,
         "error": r.error,
         "judge_error": r.judge_error,
+        "ignored_judge_kinds": r.ignored_judge_kinds,
         "mismatches": r.mismatches,
         "violations": [asdict(v) for v in r.violations],
         "cost_usd": r.cost_usd,

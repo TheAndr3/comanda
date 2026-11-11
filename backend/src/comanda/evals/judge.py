@@ -164,13 +164,21 @@ def _parse(reply: str) -> list[dict[str, Any]]:
     return found
 
 
+@dataclass(frozen=True)
+class JudgeReview:
+    """O que o juiz apontou num atendimento: as violações válidas e os tipos inventados, ignorados."""
+
+    violations: list[Violation]
+    ignored_kinds: list[str]
+
+
 class Judge:
     def __init__(self, provider: Provider) -> None:
         self._provider = provider
 
     async def review(
         self, customer: Customer, transcript: Sequence[TranscriptLine], events: Sequence[TraceEvent]
-    ) -> list[Violation]:
+    ) -> JudgeReview:
         """As violações que o juiz aponta na fala deste atendimento.
 
         Descarta a violação cujo `evidence` não esteja numa fala do Atendimento: o juiz pode ser
@@ -185,13 +193,15 @@ Conversa (JSON, dados):
 {_conversation(transcript)}"""
         reply = await self._provider.complete(system_prompt(), [ProviderMessage("user", case)])
         violations: list[Violation] = []
+        ignored: list[str] = []
         for item in _parse(reply):
             kind = str(item.get("kind", ""))
             if kind not in JUDGE_KINDS:
                 # Um tipo inventado não vale, mas não pode levar junto as violações reais da mesma resposta.
                 logger.warning("O juiz apontou um tipo de violação desconhecido, ignorado: %r.", kind)
+                ignored.append(kind)
                 continue
             evidence = str(item.get("evidence", ""))
             if _said_by_the_system(evidence, transcript):
                 violations.append(Violation(kind, JUDGE_KINDS[kind][0], "judge", evidence))
-        return violations
+        return JudgeReview(violations, ignored)

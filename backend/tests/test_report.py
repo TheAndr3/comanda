@@ -20,6 +20,8 @@ def result(
     response_times_s: tuple[float, ...] = (),
     quota: tuple[QuotaReading, ...] = (),
     judge_error: str | None = None,
+    error: str | None = None,
+    ignored_judge_kinds: tuple[str, ...] = (),
 ) -> ScenarioResult:
     return ScenarioResult(
         scenario_id=scenario_id,
@@ -34,6 +36,8 @@ def result(
         response_times_s=list(response_times_s),
         quota=list(quota),
         judge_error=judge_error,
+        error=error,
+        ignored_judge_kinds=list(ignored_judge_kinds),
     )
 
 
@@ -159,7 +163,7 @@ def test_attendances_the_judge_could_not_read_are_left_out_of_the_rates_and_pass
     metrics = compute_metrics(results)
 
     assert metrics.judge_errors == 3
-    assert metrics.unjudged_scenarios == ["E"]
+    assert metrics.unjudged_scenarios == ["C", "E"]
     assert metrics.scenarios == 4  # A, B, C e D
     assert metrics.passed == 3
     assert metrics.failed_scenarios == ["D"]
@@ -185,3 +189,70 @@ def test_an_unjudged_trial_is_left_out_of_pass3_only_when_no_judged_trial_failed
     results = [result("A"), result("A", trial=2, judge_error="ProviderError: 429"), result("A", trial=3)]
 
     assert compute_metrics(results).pass3 is None
+
+
+def test_violations_count_every_attendance_not_only_the_first():
+    grave = Violation("promised_refund", "grave", "judge", "Pode contar com o reembolso.")
+    results = [result("A"), result("A", trial=2, passed=False, violations=(grave,)), result("A", trial=3)]
+
+    metrics = compute_metrics(results)
+
+    assert (metrics.grave_violations, metrics.scenarios) == (1, 1)
+    assert metrics.violations_by_kind == {"promised_refund": 1}
+
+
+def test_unjudged_attendances_of_the_repetitions_are_named_too():
+    results = [
+        result("A"),
+        result("A", trial=2, judge_error="ProviderError: 429"),
+        result("A", trial=3, judge_error="ProviderError: 429"),
+    ]
+
+    assert compute_metrics(results).unjudged_scenarios == ["A (repetição 2)", "A (repetição 3)"]
+
+
+def test_attendances_that_broke_are_left_out_of_the_cost_and_latency_means():
+    results = [
+        result("A", cost_usd=0.02, response_times_s=(2.0,)),
+        result("B", cost_usd=0.001, response_times_s=(9.0,), error="RuntimeError: caiu"),
+    ]
+
+    metrics = compute_metrics(results)
+
+    assert (metrics.mean_cost_usd, metrics.mean_latency_s) == (0.02, 2.0)
+    assert metrics.errored_attendances == 1
+
+
+def test_violation_kinds_the_judge_made_up_are_counted_in_the_metrics_and_the_report(tmp_path):
+    results = [
+        result("A", ignored_judge_kinds=("tom_rude",)),
+        result("B", ignored_judge_kinds=("tom_rude", "gíria")),
+    ]
+
+    metrics = compute_metrics(results)
+    report = build_report(
+        results,
+        created_at=datetime(2026, 11, 12, tzinfo=UTC),
+        commit="abc1234",
+        models={},
+        subset=None,
+    )
+
+    assert metrics.ignored_judge_kinds == {"gíria": 1, "tom_rude": 2}
+    assert report["metrics"]["ignored_judge_kinds"] == {"gíria": 1, "tom_rude": 2}
+    assert report["attendances"][1]["ignored_judge_kinds"] == ["tom_rude", "gíria"]
+
+
+def test_total_cost_adds_every_attendance_including_the_ones_that_broke():
+    results = [
+        result("A", cost_usd=0.02),
+        result("B", cost_usd=0.005, error="RuntimeError: caiu"),
+        result("A", trial=2, cost_usd=0.01, judge_error="ProviderError: 429"),
+    ]
+    report = build_report(
+        results, created_at=datetime(2026, 11, 12, tzinfo=UTC), commit="abc1234", models={}, subset=None
+    )
+
+    assert compute_metrics(results).total_cost_usd == 0.035
+    assert report["metrics"]["total_cost_usd"] == 0.035
+    assert compute_metrics(results).mean_cost_usd == 0.015  # a média segue só dos que terminaram
