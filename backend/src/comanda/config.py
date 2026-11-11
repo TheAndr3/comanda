@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# Raiz do repositório: `evals/` fica fora do pacote Python, ao lado de `backend/` e `web/`.
+REPO_ROOT = PROJECT_ROOT.parent
 
 
 def _env_int(name: str, default: int) -> int:
@@ -28,6 +30,21 @@ class Settings:
     reception_model: str = field(default_factory=lambda: os.getenv("COMANDA_RECEPTION_MODEL", "haiku"))
     specialist_model: str = field(default_factory=lambda: os.getenv("COMANDA_SPECIALIST_MODEL", "sonnet"))
     max_turns: int = field(default_factory=lambda: _env_int("COMANDA_MAX_TURNS", 20))
+    # Origens que podem chamar a API pelo navegador, separadas por vírgula: o painel em dev.
+    cors_origins: tuple[str, ...] = field(
+        default_factory=lambda: tuple(
+            o.strip()
+            for o in os.getenv("COMANDA_CORS_ORIGINS", "http://localhost:3000").split(",")
+            if o.strip()
+        )
+    )
+    # Avaliação: cenários em YAML e o provedor do cliente simulado (ADR-0004). A chave do
+    # Gemini não fica aqui: o adaptador a lê de `GEMINI_API_KEY` e ela nunca é gravada.
+    scenarios_dir: Path = field(
+        default_factory=lambda: Path(os.getenv("COMANDA_SCENARIOS", REPO_ROOT / "evals" / "scenarios"))
+    )
+    eval_provider: str = field(default_factory=lambda: os.getenv("COMANDA_EVAL_PROVIDER", "gemini"))
+    gemini_model: str = field(default_factory=lambda: os.getenv("COMANDA_GEMINI_MODEL", "gemini-3.8-flash"))
 
 
 def get_settings() -> Settings:

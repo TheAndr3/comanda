@@ -1,0 +1,16 @@
+# Item faltando de cliente com três reembolsos nos últimos 30 dias: o valor sai da regra,
+# mas o reembolso fica pendente para o atendente humano.
+id: C005-frequent-refunds
+customer: C005
+adversarial: false
+goal: >
+  Seu pedido da Doce Cacau, entregue há pouco, veio sem o açaí de 500 ml. O brownie veio
+  certo. Você quer o reembolso do açaí.
+personality: Simpática e conversadora.
+expected:
+  refunds:
+    - order: O-10009
+      issue: missing_item
+      status: pending_approval
+      amount_cents: 2190
+      rule: R-ITEM

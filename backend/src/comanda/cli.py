@@ -1,7 +1,9 @@
 """CLI do Comanda: adaptador fino sobre as operações de domínio.
 
 `comanda seed` recria o banco; `comanda chat --customer <id>` abre um atendimento pelo
-terminal; `comanda queue ...` é a Fila do atendente humano (ADR-0007).
+terminal; `comanda queue ...` é a Fila do atendente humano (ADR-0007); `comanda eval` roda
+os cenários de avaliação com o cliente simulado (ADR-0015); `comanda serve` sobe a API do
+painel (ADR-0005).
 """
 
 from __future__ import annotations
@@ -18,6 +20,9 @@ from .data.seed import seed_database
 from .domain.db import Repository
 from .domain.policies import format_brl
 from .domain.queue import QueueError, approve_refund, list_queue, reject_refund, resolve_ticket
+from .evals import ProviderError, provider_from_settings
+from .evaluate import run_eval
+from .runtime import ClaudeAgentRuntime
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -29,6 +34,14 @@ def _parser() -> argparse.ArgumentParser:
     chat = commands.add_parser("chat", help="Conversa com o atendimento pelo terminal.")
     chat.add_argument("--customer", required=True, help="Cliente já autenticado, por exemplo C001.")
     chat.add_argument("--trace", action="store_true", help="Mostra os eventos do Rastro a cada turno.")
+
+    evaluate = commands.add_parser("eval", help="Roda os cenários de avaliação com o cliente simulado.")
+    evaluate.add_argument(
+        "--subset",
+        nargs="*",
+        metavar="ID",
+        help="Só estes cenários (id ou cliente, por exemplo C002); sem ids, um subconjunto padrão.",
+    )
 
     queue = commands.add_parser("queue", help="Fila do atendente humano.").add_subparsers(
         dest="action", required=True
@@ -43,6 +56,10 @@ def _parser() -> argparse.ArgumentParser:
     reject.add_argument("--reason", required=True, help="Motivo da recusa (obrigatório).")
     resolve = queue.add_parser("resolve", help="Marca um ticket como resolvido.")
     resolve.add_argument("ticket_id")
+
+    serve = commands.add_parser("serve", help="Sobe a API do painel com o runtime do Claude Agent SDK.")
+    serve.add_argument("--host", default="127.0.0.1", help="Endereço (padrão: só esta máquina).")
+    serve.add_argument("--port", type=int, default=8000)
     return parser
 
 
@@ -86,12 +103,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Banco recriado em {settings.db_path}.")
         return 0
 
+    if args.command == "eval":
+        try:
+            provider = provider_from_settings(settings)
+        except ProviderError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        return asyncio.run(run_eval(settings, args.subset, lambda _: ClaudeAgentRuntime(settings), provider))
+
     if not settings.db_path.exists():
         print(f"Banco não encontrado em {settings.db_path}. Rode `comanda seed` antes.", file=sys.stderr)
         return 1
     repo = Repository(settings.db_path)
     if args.command == "chat":
         return asyncio.run(run_chat(repo, settings, args.customer, show_trace=args.trace))
+    if args.command == "serve":
+        # Importados aqui para os outros comandos não carregarem o servidor web.
+        import uvicorn
+
+        from .api import create_app
+
+        # Um SSE aberto nunca termina sozinho; sem o limite, Ctrl+C esperaria o painel fechar.
+        uvicorn.run(create_app(settings), host=args.host, port=args.port, timeout_graceful_shutdown=3)
+        return 0
     try:
         _run_queue(repo, args)
     except QueueError as exc:

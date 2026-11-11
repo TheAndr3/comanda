@@ -16,7 +16,7 @@ Atrasos são medidos em relação ao horário previsto (ETA) informado no pedido
 Pedido cancelado pelo restaurante: reembolso integral. Pedido em rota há mais de 90 minutos além do previsto: considerado extraviado, com reembolso integral. Se o pedido consta como entregue mas o cliente diz que não recebeu, o caso vai para análise humana.
 
 ## Aprovação humana
-Reembolsos acima de R$ 80,00 precisam de aprovação de um atendente humano. Clientes com três ou mais reembolsos nos últimos 30 dias também passam por aprovação humana. O cliente deve ser avisado de que a análise leva até 24 horas.
+Reembolsos acima de R$ 80,00 precisam de aprovação de um atendente humano. Clientes com três ou mais reembolsos nos últimos 30 dias também passam por aprovação humana. O cliente é informado do valor já definido pela regra e de que um atendente vai confirmar o reembolso.
 
 ## Formas de reembolso
 O valor volta para o mesmo meio de pagamento usado no pedido. Cartão de crédito: até duas faturas. Pix e saldo da carteira: até 1 dia útil.

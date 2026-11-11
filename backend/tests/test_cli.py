@@ -1,5 +1,6 @@
 """Testes de fumaça da CLI da Fila: adaptador fino sobre as operações de domínio."""
 
+import httpx
 import pytest
 
 from comanda.cli import main
@@ -63,3 +64,18 @@ def test_resolve_ticket_through_cli(ctx_for, capsys):
 
     assert main(["queue", "list"]) == 0
     assert ticket_id not in capsys.readouterr().out
+
+
+async def test_serve_starts_the_api_on_the_given_address(monkeypatch):
+    served = {}
+    monkeypatch.setattr(
+        "uvicorn.run", lambda app, host, port, **_: served.update(app=app, host=host, port=port)
+    )
+
+    assert main(["serve", "--host", "0.0.0.0", "--port", "8123"]) == 0
+
+    assert (served["host"], served["port"]) == ("0.0.0.0", 8123)
+    transport = httpx.ASGITransport(app=served["app"])
+    async with httpx.AsyncClient(transport=transport, base_url="http://api") as client:
+        response = await client.get("/customers")
+    assert response.status_code == 200

@@ -420,7 +420,8 @@ class ClaudeAgentRuntime:
         `allowed_tools` vale para a sessão inteira, então sozinho deixaria a Recepção chamar
         as ferramentas de Pedidos; o hook sabe quem chama porque o SDK informa `agent_type`
         dentro de um subagente. Também barra delegar a subagentes que não são especialistas,
-        como o `general-purpose` embutido no CLI.
+        como o `general-purpose` embutido no CLI. Uma ferramenta dentro do papel ainda passa
+        pelos guardrails do Atendimento, como o de elegibilidade antes do reembolso (ADR-0008).
         """
         data: dict[str, Any] = dict(hook_input)
         caller_type = data.get("agent_type")
@@ -434,6 +435,7 @@ class ClaudeAgentRuntime:
         else:
             caller = "system"  # subagente que não é nosso: não é a Recepção nem um especialista
         tool, reason = raw_name, None
+        own_tool_of: Agent | None = None
         if caller == "system":
             reason = f"O agente {caller_type!r} não é um agente do atendimento e não tem ferramentas."
         elif raw_name in DELEGATION_TOOLS:
@@ -442,16 +444,24 @@ class ClaudeAgentRuntime:
             _, owner, tool = raw_name.split("__", 2)
             if owner != caller:
                 reason = f"A ferramenta {tool} não pertence a este agente."
+            else:
+                own_tool_of = caller
         else:
             reason = f"Ferramenta {raw_name} indisponível neste atendimento."
-        if reason is None:
-            return {}
         try:
             if self._host is not None:
-                self._host.guardrail_blocked(caller, "agent_tools", tool, args, reason)
+                if reason is not None:
+                    self._host.guardrail_blocked(caller, "agent_tools", tool, args, reason)
+                elif own_tool_of is not None:
+                    # Ferramenta do próprio papel: os guardrails do Atendimento decidem e registram.
+                    reason = self._host.authorize(own_tool_of, tool, args)
         except Exception:
-            # Gravar a violação falhou (arquivo travado, disco cheio): a negação vale do mesmo jeito.
-            logger.exception("Não consegui registrar o guardrail_blocked de %s", tool)
+            # Gravar a violação ou consultar o guardrail falhou (arquivo travado, disco cheio):
+            # a negação vale do mesmo jeito, e a ferramenta não roda sem a checagem.
+            logger.exception("Não consegui checar ou registrar o guardrail de %s", tool)
+            reason = reason or "Não foi possível verificar esta ferramenta agora."
+        if reason is None:
+            return {}
         return {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",

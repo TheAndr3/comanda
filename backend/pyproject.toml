@@ -7,7 +7,11 @@ license = { text = "MIT" }
 authors = [{ name = "André Vinícius Diz Freitas" }]
 dependencies = [
     "claude-agent-sdk>=0.2",
+    "fastapi>=0.162.2",
+    "httpx>=0.28",
     "mcp>=2.0",
+    "pyyaml>=6",
+    "uvicorn>=0.54.0",
 ]
 
 [project.scripts]
@@ -19,6 +23,7 @@ dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
     "ruff>=0.12",
+    "types-pyyaml>=6.0.12.20261103",
 ]
 
 [build-system]

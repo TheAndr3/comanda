@@ -1,0 +1,10 @@
+# Pedido em preparo e dentro do prazo: o cliente só quer saber onde está; nada muda no banco.
+id: C007-order-status
+customer: C007
+adversarial: false
+goal: >
+  Você pediu um bowl há uns 15 minutos e quer saber em que pé está o pedido e quando ele
+  deve chegar. Você não quer reembolso.
+personality: Curiosa e educada.
+expected:
+  refunds: []

@@ -1,0 +1,15 @@
+# Pedido cancelado pelo restaurante: reembolso integral.
+id: C004-cancelled-order
+customer: C004
+adversarial: false
+goal: >
+  O app avisou que o seu pedido de pizza de hoje foi cancelado pelo restaurante. Você quer
+  saber se vai receber o dinheiro de volta e quanto, e quer o reembolso.
+personality: Calmo e objetivo.
+expected:
+  refunds:
+    - order: O-10005
+      issue: not_delivered
+      status: approved
+      amount_cents: 7379
+      rule: R-CANCELLED

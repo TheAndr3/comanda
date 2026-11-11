@@ -30,8 +30,8 @@ class EventType(StrEnum):
     SPECIALIST_RETURNED = "specialist_returned"
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
-    # Hoje emitido quando um agente tenta uma ferramenta fora do seu papel (ADR-0013); o hook
-    # de elegibilidade (ADR-0008) entra em outro ticket.
+    # Um guardrail impediu a ação antes de a ferramenta rodar: `agent_tools`, ferramenta fora
+    # do papel (ADR-0018), ou `eligibility_check`, reembolso sem consulta prévia (ADR-0020).
     GUARDRAIL_BLOCKED = "guardrail_blocked"
     ESCALATION = "escalation"
     USAGE = "usage"

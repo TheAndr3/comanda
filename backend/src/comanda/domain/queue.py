@@ -15,6 +15,10 @@ class QueueError(Exception):
     """Operação da Fila não permitida; a mensagem é para o atendente humano."""
 
 
+class QueueItemNotFound(QueueError):
+    """O reembolso ou ticket não existe."""
+
+
 @dataclass(frozen=True)
 class Queue:
     pending_refunds: list[Refund]
@@ -50,7 +54,7 @@ def _decide(
     if repo.decide_refund(refund_id, status, decided_by, repo.now(), rejection_reason):
         return
     if repo.get_refund(refund_id) is None:
-        raise QueueError(f"Reembolso {refund_id} não encontrado.")
+        raise QueueItemNotFound(f"Reembolso {refund_id} não encontrado.")
     raise QueueError(f"Reembolso {refund_id} já foi decidido.")
 
 
@@ -58,5 +62,5 @@ def resolve_ticket(repo: Repository, ticket_id: str) -> None:
     if repo.resolve_ticket(ticket_id):
         return
     if repo.get_ticket(ticket_id) is None:
-        raise QueueError(f"Ticket {ticket_id} não encontrado.")
+        raise QueueItemNotFound(f"Ticket {ticket_id} não encontrado.")
     raise QueueError(f"Ticket {ticket_id} já foi resolvido.")

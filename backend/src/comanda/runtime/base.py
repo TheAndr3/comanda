@@ -50,8 +50,20 @@ class AgentHost(Protocol):
         """O especialista devolve o resultado à Recepção."""
         ...
 
+    def authorize(self, agent: Agent, name: str, args: dict[str, Any]) -> str | None:
+        """Pergunta aos guardrails do Atendimento se a chamada pode rodar (ADR-0008).
+
+        Devolve `None` se pode, ou o motivo da negação, já registrado no Rastro. O runtime do
+        SDK pergunta no hook `PreToolUse`, para negar antes de a ferramenta ser chamada.
+        """
+        ...
+
     def call_tool(self, agent: Agent, name: str, args: dict[str, Any]) -> dict[str, Any]:
-        """Executa uma ferramenta no contexto do cliente do atendimento e devolve o resultado."""
+        """Executa uma ferramenta no contexto do cliente do atendimento e devolve o resultado.
+
+        Aplica os mesmos guardrails de `authorize`: uma chamada negada devolve `{"error": ...}`
+        sem rodar a ferramenta.
+        """
         ...
 
     def record_usage(self, usage: Usage) -> None:

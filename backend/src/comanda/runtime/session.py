@@ -6,7 +6,9 @@ runtime, enviar falas do cliente, receber as falas do sistema e os eventos do Ra
 
 from __future__ import annotations
 
+import asyncio
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,7 +17,7 @@ from typing import Any
 from ..agents.roles import AGENT_TOOLS, Agent, Specialist
 from ..config import Settings
 from ..domain.db import Repository
-from ..tools import ToolContext, run_tool
+from ..tools import ELIGIBILITY_GUARDRAIL, ToolContext, eligibility_guardrail, run_tool
 from .base import AgentRuntime, Usage
 from .masking import PersonalDataMask
 from .trace import Actor, EventType, TraceEvent, TraceWriter
@@ -49,6 +51,8 @@ class Session:
         self.closed = False
         self._writer = TraceWriter(settings.runs_dir, self.id)
         self.events: list[TraceEvent] = []
+        # Trocado a cada evento novo: quem segue o Rastro espera o atual e acorda no próximo.
+        self._new_event = asyncio.Event()
         self._record("system", EventType.SESSION_STARTED, {"customer_id": customer_id})
 
     async def send(self, message: str) -> Turn:
@@ -68,6 +72,19 @@ class Session:
         """O arquivo JSONL do Rastro deste atendimento."""
         return self._writer.path
 
+    async def follow(self, after: int = -1) -> AsyncIterator[TraceEvent]:
+        """Os eventos do Rastro depois da posição `after`, em ordem, inclusive os que ainda vão
+        acontecer; termina no fim do atendimento. É o que o SSE do painel transmite."""
+        seq = max(after + 1, 0)
+        while True:
+            new_event = self._new_event
+            while seq < len(self.events):
+                yield self.events[seq]
+                seq += 1
+            if self.closed:
+                return
+            await new_event.wait()
+
     def close(self) -> None:
         if not self.closed:
             self._record("system", EventType.SESSION_ENDED, {})
@@ -86,6 +103,8 @@ class Session:
         self.events.append(event)
         if self._turn is not None:
             self._turn.events.append(event)
+        self._new_event.set()
+        self._new_event = asyncio.Event()
 
     # --- AgentHost -------------------------------------------------------------
 
@@ -100,10 +119,20 @@ class Session:
     def specialist_returned(self, specialist: Specialist, result: str) -> None:
         self._record(specialist, EventType.SPECIALIST_RETURNED, {"result": result})
 
+    def authorize(self, agent: Agent, name: str, args: dict[str, Any]) -> str | None:
+        reason = eligibility_guardrail(self._ctx, name, args)
+        if reason is not None:
+            self.guardrail_blocked(agent, ELIGIBILITY_GUARDRAIL, name, args, reason)
+        return reason
+
     def call_tool(self, agent: Agent, name: str, args: dict[str, Any]) -> dict[str, Any]:
         if name not in AGENT_TOOLS[agent]:  # ADR-0013, aplicado aqui para qualquer runtime (ADR-0017)
             reason = f"A ferramenta {name} não pertence a este agente."
             self.guardrail_blocked(agent, "agent_tools", name, args, reason)
+            return {"error": reason}
+        # O runtime do SDK já pergunta no hook `PreToolUse`; repetir aqui garante o guardrail
+        # para qualquer runtime, e uma chamada autorizada passa de novo sem registrar nada.
+        if (reason := self.authorize(agent, name, args)) is not None:
             return {"error": reason}
         self._call_seq += 1
         call_id = f"call-{self._call_seq}"
