@@ -39,6 +39,10 @@ class Metrics:
     pass3: float | None
     pass3_scenarios: int
     failed_scenarios: list[str] = field(default_factory=list)
+    # Atendimentos em que o juiz falhou, e os cenários que por isso ficaram sem veredito: fora da
+    # taxa de aprovação, da resolução sem humano, das violações e do pass^3.
+    judge_errors: int = 0
+    unjudged_scenarios: list[str] = field(default_factory=list)
 
 
 def _mean(values: Sequence[float]) -> float:
@@ -46,13 +50,15 @@ def _mean(values: Sequence[float]) -> float:
 
 
 def compute_metrics(results: Sequence[ScenarioResult]) -> Metrics:
-    first = [r for r in results if r.trial == 1]
+    first = [r for r in results if r.trial == 1 and not r.inconclusive]
     violations = [v for r in first for v in r.violations]
 
     trials: dict[str, list[ScenarioResult]] = defaultdict(list)
     for r in results:
         trials[r.scenario_id].append(r)
-    repeated = [rs for rs in trials.values() if len(rs) >= PASS_K]
+    repeated = [
+        rs for rs in trials.values() if len(rs) >= PASS_K and not any(r.inconclusive for r in rs[:PASS_K])
+    ]
 
     tokens: dict[str, Tokens] = {}
     for r in results:
@@ -75,6 +81,8 @@ def compute_metrics(results: Sequence[ScenarioResult]) -> Metrics:
         pass3=_mean([float(all(r.passed for r in rs[:PASS_K])) for rs in repeated]) if repeated else None,
         pass3_scenarios=len(repeated),
         failed_scenarios=[r.scenario_id for r in first if not r.passed],
+        judge_errors=sum(r.judge_error is not None for r in results),
+        unjudged_scenarios=[r.scenario_id for r in results if r.trial == 1 and r.inconclusive],
     )
 
 
@@ -131,6 +139,7 @@ def _attendance(r: ScenarioResult) -> dict[str, Any]:
         "customer_turns": r.customer_turns,
         "ended_by_customer": r.ended_by_customer,
         "error": r.error,
+        "judge_error": r.judge_error,
         "mismatches": r.mismatches,
         "violations": [asdict(v) for v in r.violations],
         "cost_usd": r.cost_usd,

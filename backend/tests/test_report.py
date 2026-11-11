@@ -19,6 +19,7 @@ def result(
     cost_usd: float = 0.0,
     response_times_s: tuple[float, ...] = (),
     quota: tuple[QuotaReading, ...] = (),
+    judge_error: str | None = None,
 ) -> ScenarioResult:
     return ScenarioResult(
         scenario_id=scenario_id,
@@ -32,6 +33,7 @@ def result(
         cost_usd=cost_usd,
         response_times_s=list(response_times_s),
         quota=list(quota),
+        judge_error=judge_error,
     )
 
 
@@ -136,3 +138,27 @@ def test_report_is_written_under_a_name_that_sorts_by_time_and_names_the_commit(
     saved = json.loads(path.read_text(encoding="utf-8"))
     assert (saved["commit"], saved["models"], saved["subset"]) == ("abc1234", models, None)
     assert saved["metrics"]["scenarios"] == 1
+
+
+def test_attendances_the_judge_could_not_read_are_left_out_of_the_rates_and_pass3():
+    unjudged = "ProviderError: 429"
+    results = [
+        result("A"),
+        result("B", needed_human=True),
+        result("C", judge_error=unjudged),
+        # C repetido 3 vezes, mas o primeiro atendimento não foi julgado: fora do pass^3.
+        result("C", trial=2),
+        result("C", trial=3),
+        # D falhou no estado: reprova mesmo que o juiz também tenha falhado.
+        result("D", passed=False, judge_error=unjudged),
+    ]
+
+    metrics = compute_metrics(results)
+
+    assert metrics.judge_errors == 2
+    assert metrics.unjudged_scenarios == ["C"]
+    assert metrics.scenarios == 3  # A, B e D
+    assert metrics.passed == 2
+    assert metrics.failed_scenarios == ["D"]
+    assert metrics.resolved_without_human_rate == 0.333333
+    assert metrics.pass3 is None

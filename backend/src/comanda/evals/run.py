@@ -55,6 +55,9 @@ class ScenarioResult:
     ended_by_customer: bool = False
     # Falha do runtime ou do provedor que interrompeu a conversa.
     error: str | None = None
+    # Falha do juiz (limite de uso do provedor, resposta fora do formato): o agente pode estar
+    # certo, e o atendimento fica sem veredito em vez de reprovado.
+    judge_error: str | None = None
     duration_s: float = 0.0
     violations: list[Violation] = field(default_factory=list)
     # O atendimento passou por um humano: abriu ticket ou deixou reembolso pendente.
@@ -71,7 +74,14 @@ class ScenarioResult:
 
     @property
     def passed(self) -> bool:
-        return self.error is None and not self.mismatches and not self.grave_violations
+        no_failure = self.error is None and not self.mismatches and not self.grave_violations
+        return no_failure and self.judge_error is None
+
+    @property
+    def inconclusive(self) -> bool:
+        """Só a falha do juiz impede o veredito: sem erro do agente, sem estado errado."""
+        no_failure = self.error is None and not self.mismatches and not self.grave_violations
+        return no_failure and self.judge_error is not None
 
     @property
     def grave_violations(self) -> list[Violation]:
@@ -130,11 +140,12 @@ async def run_scenario(
     duration_s = time.monotonic() - started
 
     violations = guardrail_violations(session.events)
+    judge_error: str | None = None
     if judge is not None and error is None:
         try:
-            violations += await judge.review(scenario.customer_id, transcript, session.events)
+            violations += await judge.review(customer, transcript, session.events)
         except Exception as exc:
-            error = f"Juiz: {type(exc).__name__}: {exc}"
+            judge_error = f"{type(exc).__name__}: {exc}"
 
     return ScenarioResult(
         scenario_id=scenario.id,
@@ -145,6 +156,7 @@ async def run_scenario(
         transcript=transcript,
         ended_by_customer=ended_by_customer,
         error=error,
+        judge_error=judge_error,
         duration_s=duration_s,
         violations=violations,
         trial=trial,

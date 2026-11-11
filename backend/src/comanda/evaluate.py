@@ -15,6 +15,7 @@ import sys
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 
 from .config import REPO_ROOT, Settings
 from .evals import Judge, Provider, ScenarioResult, run_scenario
@@ -47,14 +48,23 @@ def select_scenarios(scenarios: list[Scenario], subset: Sequence[str] | None) ->
     return [s for s in scenarios if s.id in wanted or s.customer_id in wanted]
 
 
-def current_commit() -> str:
-    """O commit do repositório, com `-dirty` se há mudanças não commitadas; `unknown` sem git."""
-    git = ["git", "-C", str(REPO_ROOT)]
+def current_commit(root: Path = REPO_ROOT) -> str:
+    """O commit do repositório, com `-dirty` se há mudança em arquivo rastreado; `unknown` sem git.
+
+    Arquivo não rastreado não conta: o relatório de uma rodada ainda não commitado deixaria
+    todos os relatórios seguintes marcados como `-dirty` sem motivo.
+    """
+    git = ["git", "-C", str(root)]
     try:
         sha = subprocess.run(
             [*git, "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True
         )
-        status = subprocess.run([*git, "status", "--porcelain"], capture_output=True, text=True, check=True)
+        status = subprocess.run(
+            [*git, "status", "--porcelain", "--untracked-files=no"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
     except (OSError, subprocess.CalledProcessError):
         return "unknown"
     return sha.stdout.strip() + ("-dirty" if status.stdout.strip() else "")
@@ -71,7 +81,11 @@ def _models(settings: Settings) -> dict[str, str]:
 
 def _print_result(result: ScenarioResult) -> None:
     verdict = "PASSOU" if result.passed else "REPROVOU"
+    if result.inconclusive:
+        verdict = "SEM VEREDITO (falha do juiz)"
     print(f"  {verdict} em {result.customer_turns} turnos, {result.duration_s:.1f} s")
+    if result.judge_error:
+        print(f"    - O juiz falhou: {result.judge_error}")
     for mismatch in result.mismatches:
         print(f"    - {mismatch}")
     for v in result.violations:
@@ -85,6 +99,12 @@ def _print_result(result: ScenarioResult) -> None:
 
 def _print_summary(metrics: Metrics, quota: dict[str, QuotaUse]) -> None:
     print(f"\n{metrics.passed} de {metrics.scenarios} cenários passaram.")
+    if metrics.judge_errors:
+        left_out = ", ".join(metrics.unjudged_scenarios) or "nenhum cenário inteiro"
+        print(
+            f"Falha do juiz em {metrics.judge_errors} atendimento(s); cenários sem veredito: {left_out}. "
+            "Ficam fora da taxa de aprovação, da resolução sem humano, das violações e do pass^3."
+        )
     print(f"Resolução sem humano: {metrics.resolved_without_human_rate:.0%}")
     print(f"Violações: {metrics.grave_violations} graves, {metrics.minor_violations} leves")
     print(f"Custo equivalente em API por atendimento (estimativa): US$ {metrics.mean_cost_usd:.4f}")
