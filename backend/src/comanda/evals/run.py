@@ -82,10 +82,10 @@ async def run_scenario(
         # Uma falha num cenário reprova esse cenário, sem derrubar a rodada inteira.
         error = f"{type(exc).__name__}: {exc}"
     finally:
-        aclose = getattr(runtime, "aclose", None)
-        if aclose is not None:
-            await aclose()
-        session.close()
+        try:
+            session.close()  # primeiro: o Rastro registra o fim mesmo que o runtime falhe ao fechar
+        finally:
+            await runtime.aclose()
 
     return ScenarioResult(
         scenario_id=scenario.id,

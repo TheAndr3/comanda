@@ -82,11 +82,9 @@ class _LiveSession:
         if self.session.closed:
             return
         try:
-            aclose = getattr(self.runtime, "aclose", None)
-            if aclose is not None:
-                await aclose()
+            self.session.close()  # primeiro: o Rastro registra o fim mesmo que o runtime falhe ao fechar
         finally:
-            self.session.close()
+            await self.runtime.aclose()
 
 
 def _live_session(request: Request, session_id: str) -> _LiveSession:

@@ -257,6 +257,9 @@ class HeldTurn:
         await self.release.wait()
         host.say("Desculpe a demora.")
 
+    async def aclose(self) -> None:
+        pass
+
 
 async def test_closing_during_a_turn_waits_for_it_so_session_ended_is_last(client, runtimes, settings):
     held = HeldTurn()
