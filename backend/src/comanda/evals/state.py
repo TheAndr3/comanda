@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..domain.db import Repository
-from ..domain.models import Refund, Ticket
+from ..domain.models import Refund, RefundStatus, Ticket
 from ..domain.policies import format_brl
 from .scenario import ExpectedRefund, ExpectedTicket, Scenario
 
@@ -75,3 +75,12 @@ def check_final_state(repo: Repository, scenario: Scenario, baseline: Baseline) 
         else:
             new_tickets.remove(match)
     return mismatches
+
+
+def needed_human(repo: Repository, baseline: Baseline) -> bool:
+    """O atendimento abriu um ticket ou deixou um reembolso pendente para um humano decidir."""
+    new_tickets = any(t.id not in baseline.ticket_ids for t in repo.list_tickets())
+    new_pending = any(
+        r.id not in baseline.refund_ids for r in repo.list_refunds(RefundStatus.PENDING_APPROVAL)
+    )
+    return new_tickets or new_pending

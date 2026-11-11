@@ -19,6 +19,7 @@ from .fake_claude import (
     Ends,
     FakeClaude,
     Hangs,
+    Limits,
     Raises,
     Returns,
     Says,
@@ -663,3 +664,20 @@ async def test_cost_is_split_evenly_when_no_agent_has_a_weight(repo, settings):
 
     costs = [e.data["cost_usd"] for e in turn.events if e.type == "usage"]
     assert sum(costs) == pytest.approx(0.01)
+
+
+async def test_subscription_quota_readings_go_to_the_trace(repo, settings):
+    fake = FakeClaude([[Limits("five_hour", utilization=0.42, resets_at=1_790_000_000), Says("Oi!"), Ends()]])
+    session = start_session(
+        repo, settings, customer_id="C001", runtime=ClaudeAgentRuntime(settings, client_factory=fake)
+    )
+
+    turn = await session.send("Oi")
+
+    assert [(e.agent, e.data) for e in turn.events if e.type == "quota"] == [
+        (
+            "system",
+            {"window": "five_hour", "status": "allowed", "utilization": 0.42, "resets_at": 1_790_000_000},
+        )
+    ]
+    assert turn.replies == ["Oi!"]

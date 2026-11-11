@@ -20,7 +20,7 @@ from .data.seed import seed_database
 from .domain.db import Repository
 from .domain.policies import format_brl
 from .domain.queue import QueueError, approve_refund, list_queue, reject_refund, resolve_ticket
-from .evals import ProviderError, provider_from_settings
+from .evals import Judge, ProviderError, provider_from_settings
 from .evaluate import run_eval
 from .runtime import ClaudeAgentRuntime
 
@@ -106,10 +106,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "eval":
         try:
             provider = provider_from_settings(settings)
+            judge = Judge(provider_from_settings(settings, settings.judge_model))
         except ProviderError as exc:
             print(str(exc), file=sys.stderr)
             return 1
-        return asyncio.run(run_eval(settings, args.subset, lambda _: ClaudeAgentRuntime(settings), provider))
+        return asyncio.run(
+            run_eval(settings, args.subset, lambda _: ClaudeAgentRuntime(settings), provider, judge=judge)
+        )
 
     if not settings.db_path.exists():
         print(f"Banco não encontrado em {settings.db_path}. Rode `comanda seed` antes.", file=sys.stderr)

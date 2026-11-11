@@ -35,6 +35,20 @@ class Usage:
     price_table_cost_usd: float | None = None
 
 
+@dataclass(frozen=True)
+class QuotaReading:
+    """Estado de uma janela de limite de uso da assinatura (ADR-0024).
+
+    `window` é a janela do CLI (`five_hour`, `seven_day`...), `utilization` a fração já
+    consumida, de 0 a 1, quando o CLI a informa, e `resets_at` o instante Unix da renovação.
+    """
+
+    window: str
+    status: str
+    utilization: float | None = None
+    resets_at: int | None = None
+
+
 class AgentHost(Protocol):
     """O que o Atendimento oferece ao runtime durante um turno."""
 
@@ -77,6 +91,10 @@ class AgentHost(Protocol):
 
         `agent` é `system` quando nem o runtime sabe dizer quem agiu (ADR-0018).
         """
+        ...
+
+    def record_quota(self, reading: QuotaReading) -> None:
+        """Registra o estado da cota da assinatura que o runtime observou."""
         ...
 
 

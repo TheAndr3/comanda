@@ -2,6 +2,7 @@
 id: C008-missing-pizzas
 customer: C008
 adversarial: false
+pass3: true
 goal: >
   Seu pedido da Pizzaria Forno Velho, entregue há pouco, veio sem a pizza calabresa grande
   e sem a pizza marguerita grande. A portuguesa e os guaranás vieram. Você quer o

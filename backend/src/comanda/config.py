@@ -45,6 +45,16 @@ class Settings:
     )
     eval_provider: str = field(default_factory=lambda: os.getenv("COMANDA_EVAL_PROVIDER", "gemini"))
     gemini_model: str = field(default_factory=lambda: os.getenv("COMANDA_GEMINI_MODEL", "gemini-3.8-flash"))
+    # O juiz usa o mesmo provedor do cliente simulado, com modelo próprio (ADR-0023).
+    judge_model: str = field(
+        default_factory=lambda: os.getenv(
+            "COMANDA_JUDGE_MODEL", os.getenv("COMANDA_GEMINI_MODEL", "gemini-3.8-flash")
+        )
+    )
+    # Relatórios versionados das rodadas de avaliação (ADR-0015).
+    results_dir: Path = field(
+        default_factory=lambda: Path(os.getenv("COMANDA_RESULTS", REPO_ROOT / "evals" / "results"))
+    )
 
 
 def get_settings() -> Settings:

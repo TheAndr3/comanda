@@ -3,6 +3,7 @@
 id: C003-lost-order
 customer: C003
 adversarial: false
+pass3: true
 goal: >
   Você pediu sushi há mais de duas horas e o pedido nunca chegou; o app ainda mostra que
   saiu para entrega. Você desistiu de esperar e quer o dinheiro de volta.

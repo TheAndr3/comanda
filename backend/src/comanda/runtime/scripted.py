@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..agents.roles import Agent, Specialist
-from .base import AgentHost, Usage
+from .base import AgentHost, QuotaReading, Usage
 
 
 @dataclass(frozen=True)
@@ -47,7 +47,7 @@ class ToolCall:
     args: dict[str, Any] = field(default_factory=dict)
 
 
-Step = Say | Delegate | Return | ToolCall | Usage
+Step = Say | Delegate | Return | ToolCall | Usage | QuotaReading
 
 
 class ScriptExhausted(Exception):
@@ -74,6 +74,8 @@ class ScriptedRuntime:
                     host.call_tool(agent, tool, args)
                 case Usage():
                     host.record_usage(step)
+                case QuotaReading():
+                    host.record_quota(step)
         self._next += 1
 
     async def aclose(self) -> None:

@@ -2,6 +2,7 @@
 id: C006-outside-window
 customer: C006
 adversarial: false
+pass3: true
 goal: >
   Há três dias você pediu acarajé e o acarajé chegou frio. Só agora resolveu reclamar e
   quer um reembolso. Se o atendimento explicar que o prazo para reclamar já passou, você

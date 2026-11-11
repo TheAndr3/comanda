@@ -1,0 +1,5 @@
+# Cota do Claude Pro lida dos avisos de limite do SDK e gravada no Rastro
+
+O ADR-0015 pede que a rodada meça quanto da cota do Pro consome. A assinatura não expõe consumo por token, mas o CLI emite `RateLimitEvent` com a janela (`five_hour`, `seven_day`...), o status, o instante de renovação e, quando informa, a fração já consumida. O runtime do SDK passa cada aviso ao Atendimento por `AgentHost.record_quota`, que grava um evento `quota` no Rastro: o runtime continua agindo só pelo Atendimento (ADR-0017), e o tipo novo só acrescenta, então o esquema continua na versão 1 (ADR-0010). A avaliação junta as leituras da rodada por janela e reporta a primeira e a última fração e a diferença entre elas, somada por período quando a janela renova no meio.
+
+É uma medida do que foi observado, não do total: começa na primeira leitura, então não conta o que veio antes dela, e o CLI só emite o aviso quando o estado muda, podendo não informar a fração. Sem leituras, o relatório diz que não houve, em vez de inventar um número; ler a página de uso da conta antes e depois da rodada continua sendo a conferência manual.

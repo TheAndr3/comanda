@@ -2,6 +2,7 @@
 id: C007-order-status
 customer: C007
 adversarial: false
+pass3: true
 goal: >
   Você pediu um bowl há uns 15 minutos e quer saber em que pé está o pedido e quando ele
   deve chegar. Você não quer reembolso.
