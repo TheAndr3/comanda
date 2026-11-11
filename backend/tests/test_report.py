@@ -145,20 +145,43 @@ def test_attendances_the_judge_could_not_read_are_left_out_of_the_rates_and_pass
     results = [
         result("A"),
         result("B", needed_human=True),
+        # C: o 1º atendimento ficou sem veredito, e os outros dois passaram. A taxa usa o 1º
+        # atendimento julgado (o 2º), mas o pass^3 não pode contar um trial que ninguém leu.
         result("C", judge_error=unjudged),
-        # C repetido 3 vezes, mas o primeiro atendimento não foi julgado: fora do pass^3.
         result("C", trial=2),
         result("C", trial=3),
         # D falhou no estado: reprova mesmo que o juiz também tenha falhado.
         result("D", passed=False, judge_error=unjudged),
+        # E: todos os atendimentos sem veredito, o cenário fica de fora de tudo.
+        result("E", judge_error=unjudged),
     ]
 
     metrics = compute_metrics(results)
 
-    assert metrics.judge_errors == 2
-    assert metrics.unjudged_scenarios == ["C"]
-    assert metrics.scenarios == 3  # A, B e D
-    assert metrics.passed == 2
+    assert metrics.judge_errors == 3
+    assert metrics.unjudged_scenarios == ["E"]
+    assert metrics.scenarios == 4  # A, B, C e D
+    assert metrics.passed == 3
     assert metrics.failed_scenarios == ["D"]
-    assert metrics.resolved_without_human_rate == 0.333333
+    assert metrics.resolved_without_human_rate == 0.5  # A e C, de 4
     assert metrics.pass3 is None
+
+
+def test_a_failed_trial_with_a_verdict_makes_pass3_zero_even_if_another_trial_has_no_verdict():
+    results = [
+        result("A", judge_error="ProviderError: 429"),  # sem veredito
+        result("A", trial=2, passed=False),  # estado errado: reprova com certeza
+        result("A", trial=3),
+    ]
+
+    metrics = compute_metrics(results)
+
+    assert (metrics.pass3, metrics.pass3_scenarios) == (0.0, 1)
+    # O 1º atendimento julgado (o 2º) é o do cenário nas taxas: ele reprovou.
+    assert (metrics.scenarios, metrics.passed, metrics.failed_scenarios) == (1, 0, ["A"])
+
+
+def test_an_unjudged_trial_is_left_out_of_pass3_only_when_no_judged_trial_failed():
+    results = [result("A"), result("A", trial=2, judge_error="ProviderError: 429"), result("A", trial=3)]
+
+    assert compute_metrics(results).pass3 is None

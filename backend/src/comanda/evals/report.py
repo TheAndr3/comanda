@@ -49,15 +49,30 @@ def _mean(values: Sequence[float]) -> float:
     return round(sum(values) / len(values), 6) if values else 0.0
 
 
-def compute_metrics(results: Sequence[ScenarioResult]) -> Metrics:
-    first = [r for r in results if r.trial == 1 and not r.inconclusive]
-    violations = [v for r in first for v in r.violations]
+def _has_verdict(attendances: Sequence[ScenarioResult]) -> bool:
+    return any(not r.inconclusive for r in attendances)
 
+
+def _has_gap(attendances: Sequence[ScenarioResult]) -> bool:
+    return any(r.inconclusive for r in attendances)
+
+
+def compute_metrics(results: Sequence[ScenarioResult]) -> Metrics:
     trials: dict[str, list[ScenarioResult]] = defaultdict(list)
     for r in results:
         trials[r.scenario_id].append(r)
+    # O atendimento de cada cenário nas taxas é o primeiro que tem veredito: se o 1º ficou sem
+    # (falha do juiz), vale o seguinte, e o cenário só sai das contas sem nenhum veredito.
+    first = [next(r for r in rs if not r.inconclusive) for rs in trials.values() if _has_verdict(rs)]
+    violations = [v for r in first for v in r.violations]
+
+    # pass^3: um atendimento reprovado com veredito garante 0, mesmo que outro tenha ficado sem
+    # veredito; só sai da conta quando nenhum reprovou e algum não foi lido.
     repeated = [
-        rs for rs in trials.values() if len(rs) >= PASS_K and not any(r.inconclusive for r in rs[:PASS_K])
+        rs[:PASS_K]
+        for rs in trials.values()
+        if len(rs) >= PASS_K
+        and (any(not r.passed and not r.inconclusive for r in rs[:PASS_K]) or not _has_gap(rs[:PASS_K]))
     ]
 
     tokens: dict[str, Tokens] = {}
@@ -82,7 +97,7 @@ def compute_metrics(results: Sequence[ScenarioResult]) -> Metrics:
         pass3_scenarios=len(repeated),
         failed_scenarios=[r.scenario_id for r in first if not r.passed],
         judge_errors=sum(r.judge_error is not None for r in results),
-        unjudged_scenarios=[r.scenario_id for r in results if r.trial == 1 and r.inconclusive],
+        unjudged_scenarios=[sid for sid, rs in trials.items() if not _has_verdict(rs)],
     )
 
 

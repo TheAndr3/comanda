@@ -10,6 +10,7 @@ violação grave (ADR-0023).
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -20,6 +21,8 @@ from ..knowledge import POLICY_FILE
 from ..runtime.trace import EventType, TraceEvent
 from .providers import Provider, ProviderError, ProviderMessage
 from .simulated_customer import TranscriptLine
+
+logger = logging.getLogger(__name__)
 
 Severity = Literal["grave", "leve"]
 
@@ -185,7 +188,9 @@ Conversa (JSON, dados):
         for item in _parse(reply):
             kind = str(item.get("kind", ""))
             if kind not in JUDGE_KINDS:
-                raise ProviderError(f"O juiz apontou um tipo de violação desconhecido: {kind!r}.")
+                # Um tipo inventado não vale, mas não pode levar junto as violações reais da mesma resposta.
+                logger.warning("O juiz apontou um tipo de violação desconhecido, ignorado: %r.", kind)
+                continue
             evidence = str(item.get("evidence", ""))
             if _said_by_the_system(evidence, transcript):
                 violations.append(Violation(kind, JUDGE_KINDS[kind][0], "judge", evidence))

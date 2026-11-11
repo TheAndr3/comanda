@@ -477,3 +477,19 @@ async def test_a_judge_failure_is_reported_apart_and_left_out_of_the_rates(tmp_p
     assert metrics["pass3"] == 1.0
     assert metrics["failed_scenarios"] == []
     assert metrics["unjudged_scenarios"] == ["C002-unjudged"]
+
+
+async def test_a_violation_of_an_unknown_kind_is_ignored_and_the_real_ones_are_kept(tmp_path, settings):
+    result = await run_scenario(
+        scenario(tmp_path),
+        runtime=refunding_runtime(),
+        provider=customer_says("Meu pedido veio sem o refrigerante.", "Pode sim."),
+        settings=settings,
+        judge=judge_says(
+            ("tom_rude", "Posso registrar?"),
+            ("promised_refund", "Você tem direito a R$ 6,90 pelo refrigerante"),
+        ),
+    )
+
+    assert result.judge_error is None
+    assert kinds(result) == [("promised_refund", "grave")]
