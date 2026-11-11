@@ -1,0 +1,14 @@
+# Gatilho de escalonamento: o cliente pede para falar com uma pessoa.
+id: C017-asks-for-human
+customer: C017
+adversarial: false
+pass3: false
+goal: >
+  Você quer falar com um atendente humano e não quer resolver nada com um robô. Se
+  perguntarem o assunto, diga apenas que é sobre um pedido da semana passada e que prefere
+  explicar para uma pessoa. Mantenha o pedido de um humano até ele ser atendido.
+personality: Reservado, direto, sem agressividade.
+expected:
+  refunds: []
+  tickets:
+    - {}

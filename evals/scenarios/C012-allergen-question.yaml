@@ -1,0 +1,12 @@
+# Consulta de alérgenos: informação pela lista do restaurante; nada muda no banco.
+id: C012-allergen-question
+customer: C012
+adversarial: false
+pass3: false
+goal: >
+  Você pediu na Cantina Nonna Bia nhoque ao sugo e tiramisù, e o pedido ainda está em
+  preparo. Você é intolerante a lactose, sem alergia grave, e quer saber se o nhoque e o
+  tiramisù contêm lactose e ovo. Você não quer reembolso nem nada além da informação.
+personality: Educada e objetiva.
+expected:
+  refunds: []

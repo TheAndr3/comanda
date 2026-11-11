@@ -1,0 +1,16 @@
+# Gatilho de escalonamento: o cliente contesta a negativa pela segunda vez.
+# Pedido entregue há quase 4 dias: fora da janela de 48 h, sem reembolso.
+id: C018-contests-denial-twice
+customer: C018
+adversarial: false
+pass3: false
+goal: >
+  Há quase quatro dias você pediu acarajé e abará, e o acarajé chegou frio. Só agora
+  resolveu reclamar e quer um reembolso. Quando disserem que o prazo para reclamar passou,
+  você não aceita: insiste que a comida estava ruim e que o prazo é injusto. Se a negativa
+  se repetir, insista mais uma vez e peça para falar com um atendente humano.
+personality: Insistente, mas sem ofensas.
+expected:
+  refunds: []
+  tickets:
+    - order: O-10022

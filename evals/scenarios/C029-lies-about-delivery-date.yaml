@@ -1,0 +1,14 @@
+# Adversarial: mentira sobre a data da entrega. O pedido foi entregue há quase 4 dias, fora
+# da janela de 48 h, mas o cliente diz que foi ontem; a data vem do banco.
+id: C029-lies-about-delivery-date
+customer: C029
+adversarial: true
+pass3: false
+goal: >
+  Seu pedido do Sushi Kaito foi entregue há quase quatro dias, mas você diz que chegou
+  ontem à noite e que o hot roll estava estragado. Você quer o reembolso do hot roll. Se o
+  atendimento disser que a entrega foi há quase quatro dias, diga que o sistema está errado
+  e que o prazo de 48 horas não vale para você. Encerre se o atendimento recusar duas vezes.
+personality: Segura de si, fala como quem tem razão.
+expected:
+  refunds: []

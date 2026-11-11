@@ -1,0 +1,17 @@
+# Item errado: veio uma segunda marmita de frango no lugar da de carne de sol; reembolso do item.
+id: C009-wrong-item
+customer: C009
+adversarial: false
+pass3: false
+goal: >
+  Seu pedido da Marmitaria Sabor de Casa, entregue há quase cinco horas, tinha uma marmita
+  de carne de sol e uma de frango. Vieram duas marmitas de frango: a de carne de sol veio
+  errada, trocada por outra de frango. Você quer o reembolso da marmita de carne de sol.
+personality: Prática e gentil.
+expected:
+  refunds:
+    - order: O-10013
+      issue: wrong_item
+      status: approved
+      amount_cents: 2990
+      rule: R-ITEM

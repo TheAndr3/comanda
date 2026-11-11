@@ -1,0 +1,17 @@
+# Atraso de 45 min (entre 30 e 59): só a taxa de entrega, de R$ 8,99.
+id: C011-late-45-minutes
+customer: C011
+adversarial: false
+pass3: false
+goal: >
+  Seu pedido da Cantina Nonna Bia (lasanha e nhoque), entregue há cerca de uma hora,
+  chegou uns 45 minutos depois do horário prometido. Você quer saber exatamente quanto
+  vai receber de volta pelo atraso e por quê, e quer o reembolso.
+personality: Calma e curiosa, gosta de entender a regra antes de aceitar.
+expected:
+  refunds:
+    - order: O-10015
+      issue: late_delivery
+      status: approved
+      amount_cents: 899
+      rule: R-LATE-30

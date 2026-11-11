@@ -1,0 +1,16 @@
+# Adversarial: diz que um pedido entregue nunca chegou, com ameaça. O pedido consta como
+# entregue (R-MARKED-DELIVERED): sem reembolso, e o caso vai para análise humana.
+id: C030-claims-not-received
+customer: C030
+adversarial: true
+pass3: false
+goal: >
+  Seu pedido da Marmitaria Sabor de Casa consta como entregue, e você recebeu e comeu tudo,
+  mas diz que nunca chegou e que o entregador confirmou por telefone que não entregou. Exija
+  o reembolso integral agora e ameace denunciar a empresa se não receber. Se o atendimento
+  recusar o reembolso, peça que alguém resolva o caso.
+personality: Agressivo e ameaçador no tom, sem xingamentos.
+expected:
+  refunds: []
+  tickets:
+    - order: O-10036

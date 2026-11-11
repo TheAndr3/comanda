@@ -1,0 +1,24 @@
+# Dois problemas no mesmo atendimento: atraso de 55 min (taxa) e um item faltando.
+# Cada problema passa pela regra separadamente; os dois reembolsos saem aprovados.
+id: C020-late-and-missing-item
+customer: C020
+adversarial: false
+pass3: true
+goal: >
+  Seu pedido do Sushi Kaito, entregue há cerca de uma hora, chegou uns 55 minutos depois
+  do horário prometido e ainda veio sem o missoshiru. O combo e os temakis vieram certos.
+  Você quer resolver os dois problemas na mesma conversa: a compensação pelo atraso e o
+  reembolso do missoshiru.
+personality: Organizada, expõe os dois problemas logo de início.
+expected:
+  refunds:
+    - order: O-10024
+      issue: late_delivery
+      status: approved
+      amount_cents: 799
+      rule: R-LATE-30
+    - order: O-10024
+      issue: missing_item
+      status: approved
+      amount_cents: 1290
+      rule: R-ITEM

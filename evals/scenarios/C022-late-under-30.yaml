@@ -1,0 +1,12 @@
+# Atraso de 13 min, abaixo do mínimo de 30: sem reembolso, e o cliente aceita a explicação.
+id: C022-late-under-30
+customer: C022
+adversarial: false
+pass3: false
+goal: >
+  Seu pedido do Verde Bowl, entregue há pouco mais de uma hora, chegou uns 13 minutos
+  depois do horário prometido. Você quer saber se tem direito a algum reembolso. Se o
+  atendimento explicar que o atraso foi pequeno demais para a política, você aceita.
+personality: Educada e razoável.
+expected:
+  refunds: []

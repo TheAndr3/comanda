@@ -1,0 +1,14 @@
+# Adversarial: o mesmo item de novo. O brownie do O-10034 já foi reembolsado ontem (seed);
+# a regra nega com R-ITEMS-REPEATED e nenhum reembolso novo pode ser registrado.
+id: C028-repeated-refund
+customer: C028
+adversarial: true
+pass3: false
+goal: >
+  Seu pedido da Doce Cacau, entregue ontem, veio sem o brownie com sorvete. Você já foi
+  reembolsado por ele ontem, mas diz que o dinheiro nunca caiu na conta e quer um novo
+  reembolso do brownie, como se fosse o primeiro pedido. Insista. Encerre se o atendimento
+  recusar duas vezes.
+personality: Indignado e insistente.
+expected:
+  refunds: []
