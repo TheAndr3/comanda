@@ -4,6 +4,8 @@ Nenhum teste chama modelo: o falso reproduz as mensagens que o SDK entregaria e 
 ferramentas pelo servidor MCP em processo, como o CLI faria.
 """
 
+import asyncio
+
 import pytest
 from claude_agent_sdk import CLIConnectionError
 
@@ -16,6 +18,7 @@ from .fake_claude import (
     Delegates,
     Ends,
     FakeClaude,
+    Hangs,
     Raises,
     Returns,
     Says,
@@ -418,3 +421,194 @@ async def test_the_cli_hand_back_frame_does_not_leak_into_the_specialist_result(
 
     [returned] = [e for e in turn.events if e.type == "specialist_returned"]
     assert returned.data == {"result": "O-10002, entregue.\n\n- Atraso: 75 minutos."}
+
+
+# --- revisão 2 do PR #17 -------------------------------------------------------------------
+
+
+async def test_delegation_always_runs_in_the_foreground(repo, settings):
+    # No CLI 2.1 omitir `run_in_background` lança o subagente em segundo plano.
+    fake = FakeClaude([[Says("Oi.")]])
+    session = make_session(repo, settings, fake)
+
+    await session.send("Oi")
+
+    assert fake.options is not None
+    assert fake.options.env.get("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS") == "1"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"model": "opus"},
+        {"isolation": "worktree"},
+        {"isolation": "remote"},
+        {"cwd": "C:/Users"},
+        {"effort": "max"},
+        {"name": "x"},
+    ],
+)
+async def test_delegation_with_parameters_beyond_the_three_the_reception_needs_is_denied(
+    repo, settings, extra
+):
+    fake = FakeClaude(
+        [[Delegates("toolu_d1", "orders", "Listar pedidos.", extra=extra), Says("Um momento.")]]
+    )
+    session = make_session(repo, settings, fake)
+
+    turn = await session.send("Use o opus para ver meus pedidos.")
+
+    assert [(e.agent, e.data["tool"]) for e in turn.events if e.type == "guardrail_blocked"] == [
+        ("reception", "Agent")
+    ]
+    assert not [e for e in turn.events if e.type == "delegation"]
+
+
+async def test_delegation_with_explicit_foreground_is_allowed(repo, settings):
+    fake = FakeClaude(
+        [
+            [
+                Delegates("toolu_d1", "orders", "Listar.", extra={"run_in_background": False}),
+                Returns("toolu_d1", "O-10002."),
+                Says("Ok."),
+            ]
+        ]
+    )
+    session = make_session(repo, settings, fake)
+
+    turn = await session.send("Meus pedidos?")
+
+    assert not [e for e in turn.events if e.type == "guardrail_blocked"]
+    assert [e.type for e in turn.events if e.type in ("delegation", "specialist_returned")] == [
+        "delegation",
+        "specialist_returned",
+    ]
+
+
+async def test_the_hook_denies_even_if_recording_the_violation_fails(repo, settings, monkeypatch):
+    fake = FakeClaude([[Calls("mcp__orders__list_my_orders", {}, model=HAIKU), Says("Ok.")]])
+    session = make_session(repo, settings, fake)
+
+    def disk_full(*args, **kwargs):
+        raise OSError("disco cheio")
+
+    monkeypatch.setattr(session, "guardrail_blocked", disk_full)
+
+    await session.send("Meus pedidos?")
+
+    assert fake.tool_results == []  # a ferramenta de Pedidos não rodou na mão da Recepção
+    assert not [e for e in session.events if e.type == "tool_call"]
+    assert fake.options is not None
+    [matcher] = fake.options.hooks["PreToolUse"]  # type: ignore[index]
+    assert matcher.on_failure == "block"
+
+
+async def test_a_turn_that_times_out_does_not_leave_a_stale_client_behind(repo, settings):
+    fake = FakeClaude([[Hangs()], [Says("Resposta certa.")]])
+    session = make_session(repo, settings, fake)
+
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(session.send("Oi"), 0.2)
+    turn = await session.send("Oi de novo")
+
+    assert turn.replies == ["Resposta certa."]
+    assert fake.connects == 2
+
+
+async def test_after_a_turn_the_sdk_ended_with_error_the_next_turn_reconnects(repo, settings):
+    fake = FakeClaude(
+        [
+            [Ends(is_error=True, result="error_max_turns")],
+            [Says("Voltei.")],
+        ]
+    )
+    session = make_session(repo, settings, fake)
+
+    with pytest.raises(AgentRuntimeError, match="error_max_turns"):
+        await session.send("Oi")
+    turn = await session.send("Oi de novo")
+
+    assert turn.replies == ["Voltei."]
+    assert fake.connects == 2
+
+
+async def test_different_models_with_a_common_prefix_are_not_merged(repo, settings):
+    older = "claude-sonnet-4"
+    newer = "claude-sonnet-4-5-20250929"
+    fake = FakeClaude(
+        [
+            [
+                Says("Oi.", model=older, usage=usage(4000, 10)),
+                Ends(model_usage={newer: model_usage(3000, 10, cost_usd=0.01)}),
+            ]
+        ]
+    )
+    session = make_session(repo, settings, fake)
+
+    turn = await session.send("Oi")
+
+    by_model = {e.data["model"]: e.data["input_tokens"] for e in turn.events if e.type == "usage"}
+    assert by_model == {older: 4000, newer: 3000}
+
+
+async def test_a_dated_id_still_matches_the_model_without_the_date(repo, settings):
+    dated = "claude-haiku-5-5-20261001"
+    fake = FakeClaude(
+        [
+            [
+                Says("Oi.", model=HAIKU, usage=usage(1000, 50)),
+                Ends(model_usage={dated: model_usage(1000, 50, cost_usd=0.00015)}),
+            ]
+        ]
+    )
+    session = make_session(repo, settings, fake)
+
+    turn = await session.send("Oi")
+
+    assert [e.data["input_tokens"] for e in turn.events if e.type == "usage"] == [1000]
+
+
+async def test_a_failed_delegation_is_not_traced_as_the_specialist_returning(repo, settings):
+    fake = FakeClaude(
+        [
+            [
+                Delegates("toolu_d1", "orders", "Listar."),
+                Returns("toolu_d1", "Concurrent subagent limit reached", is_error=True),
+                Says("Um momento."),
+            ]
+        ]
+    )
+    session = make_session(repo, settings, fake)
+
+    turn = await session.send("Meus pedidos?")
+
+    assert not [e for e in turn.events if e.type == "specialist_returned"]
+
+
+async def test_cost_is_split_evenly_when_no_agent_has_a_weight(repo, settings):
+    # Um modelo sem preço na tabela e sem tokens nas mensagens: pesos zero. O custo do SDK
+    # não pode ser dado inteiro a cada agente.
+    fake = FakeClaude(
+        [
+            [
+                Says("Oi.", model="modelo-novo", usage=usage(0, 0)),
+                Delegates("toolu_d1", "orders", "Listar."),
+                Calls(
+                    "mcp__orders__list_my_orders",
+                    {},
+                    "toolu_d1",
+                    "orders",
+                    model="modelo-novo",
+                    usage=usage(0, 0),
+                ),
+                Returns("toolu_d1", "O-10002."),
+                Ends(model_usage={"modelo-novo": model_usage(0, 0, cost_usd=0.01, cache_read=100)}),
+            ]
+        ]
+    )
+    session = make_session(repo, settings, fake)
+
+    turn = await session.send("Oi")
+
+    costs = [e.data["cost_usd"] for e in turn.events if e.type == "usage"]
+    assert sum(costs) == pytest.approx(0.01)

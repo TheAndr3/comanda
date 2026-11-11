@@ -8,6 +8,7 @@ negar, chama a ferramenta pelo servidor MCP em processo, pelo mesmo protocolo do
 
 from __future__ import annotations
 
+import asyncio
 import itertools
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
@@ -61,6 +62,7 @@ class Delegates:
     prompt: str
     tool_name: str = "Agent"
     run_in_background: bool = False
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -81,6 +83,7 @@ class Returns:
 
     tool_use_id: str
     text: str
+    is_error: bool = False
 
 
 @dataclass
@@ -100,7 +103,12 @@ class Raises:
     error: Exception
 
 
-Step = Says | Delegates | Calls | Returns | Ends | Raises
+@dataclass
+class Hangs:
+    """O CLI não responde: o chamador estoura o tempo (timeout da avaliação, Ctrl+C)."""
+
+
+Step = Says | Delegates | Calls | Returns | Ends | Raises | Hangs
 
 
 def model_usage(
@@ -164,7 +172,7 @@ class FakeClaude:
         match step:
             case Says(text, model, parent, usage):
                 return [self._assistant([TextBlock(text)], model, parent, usage)]
-            case Delegates(tool_use_id, subagent_type, prompt, tool_name, in_background):
+            case Delegates(tool_use_id, subagent_type, prompt, tool_name, in_background, extra):
                 args: dict[str, Any] = {
                     "subagent_type": subagent_type,
                     "prompt": prompt,
@@ -172,6 +180,7 @@ class FakeClaude:
                 }
                 if in_background:
                     args["run_in_background"] = True
+                args |= extra
                 use = self._assistant([ToolUseBlock(tool_use_id, tool_name, args)], HAIKU, None)
                 denied = await self._pre_tool_use(tool_name, args, tool_use_id, None)
                 if denied is None:
@@ -187,8 +196,12 @@ class FakeClaude:
                 self.tool_results.append(result)
                 text = result["content"][0]["text"]
                 return [use, self._tool_result(tool_use_id, text, result.get("isError", False), parent)]
-            case Returns(tool_use_id, text):
-                return [self._tool_result(tool_use_id, [{"type": "text", "text": text}])]
+            case Returns(tool_use_id, text, failed):
+                content = [{"type": "text", "text": text}]
+                return [self._tool_result(tool_use_id, content, is_error=failed)]
+            case Hangs():
+                await asyncio.sleep(30)
+                return []
             case Raises(error):
                 raise error
             case Ends(usage_by_model, total_cost_usd, is_error, result):

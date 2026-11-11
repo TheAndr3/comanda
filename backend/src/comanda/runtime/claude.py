@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import re
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
@@ -45,6 +46,8 @@ from ..tools import TOOLS
 from .base import AgentHost, Usage
 from .pricing import estimate_cost_usd, price_for
 from .trace import Actor
+
+logger = logging.getLogger(__name__)
 
 # O CLI chama a ferramenta de subagentes de `Agent`; versões antigas, de `Task`.
 DELEGATION_TOOLS = frozenset({"Agent", "Task"})
@@ -123,6 +126,39 @@ _TOOLS_USED = re.compile(r"\s*<tools-used-before-summary>.*?</tools-used-before-
 _HAND_BACK = re.compile(r"\[Subagent hand-back\].*?The report follows:\n", re.DOTALL)
 
 
+# Parâmetros da ferramenta `Agent` que a Recepção pode usar. `model`, `isolation`, `cwd`, `effort`
+# e `name` deixariam o cliente escolher o modelo (custo) ou criar worktrees.
+_DELEGATION_PARAMS = frozenset({"subagent_type", "prompt", "description", "run_in_background"})
+_DATED_ID = re.compile(r"-\d{8}")
+
+
+def _delegation_problem(args: dict[str, Any]) -> str | None:
+    """Por que uma chamada a `Agent` não é uma delegação válida, ou `None` se é."""
+    if args.get("subagent_type") not in SPECIALISTS:
+        return f"Não há especialista {args.get('subagent_type')!r}; use: {', '.join(SPECIALISTS)}."
+    if extra := sorted(set(args) - _DELEGATION_PARAMS):
+        allowed = "subagent_type, prompt, description"
+        return f"Parâmetros não permitidos em Agent: {', '.join(extra)}. Use só {allowed}."
+    if args.get("run_in_background"):
+        return "Delegue em primeiro plano: o especialista precisa devolver o resultado neste turno."
+    return None
+
+
+def _price_model(key: str, reported: _Reported | None) -> str:
+    """O id do preço: a chave de `model_usage`, ou o `canonicalModel` se a chave não estiver na tabela."""
+    if price_for(key) or reported is None or not reported.canonical:
+        return key
+    return reported.canonical
+
+
+def _same_model(message_model: str, name: str) -> bool:
+    """Mesmo modelo: ids iguais, ou um é o outro com a data (`-YYYYMMDD`) no fim."""
+    if message_model == name:
+        return True
+    shorter, longer = sorted((message_model, name), key=len)
+    return longer.startswith(shorter) and _DATED_ID.fullmatch(longer[len(shorter) :]) is not None
+
+
 def _split(total: int, weights: list[float]) -> list[int]:
     """Reparte `total` em inteiros na proporção dos pesos, sem perder nem criar unidades."""
     if total <= 0:
@@ -167,6 +203,12 @@ class ClaudeAgentRuntime:
             # Cliente morto (CLI caiu, JSON inválido): descarta para o próximo turno reconectar.
             await self._discard_client()
             raise AgentRuntimeError(f"Falha na conexão com o Claude Code: {exc}") from exc
+        except BaseException:
+            # Cancelamento (timeout, Ctrl+C) ou turno que o SDK encerrou com erro: o CLI pode
+            # ter um turno pendente ou ter saído, e reaproveitar o cliente responderia com
+            # um turno de atraso. O turno seguinte reconecta.
+            await self._discard_client()
+            raise
         finally:
             self._host = None
 
@@ -193,15 +235,19 @@ class ClaudeAgentRuntime:
                     continue  # fala interna do especialista: não vai ao cliente
                 if isinstance(block, TextBlock) and block.text.strip():
                     host.say(block.text)
-                elif isinstance(block, ToolUseBlock) and block.name in DELEGATION_TOOLS:
-                    specialist = block.input.get("subagent_type")
-                    # Em segundo plano o hook nega a chamada: não é uma delegação do turno.
-                    if specialist in SPECIALISTS and not block.input.get("run_in_background"):
-                        self._delegations[block.id] = specialist
-                        host.delegate(specialist, str(block.input.get("prompt", "")))
+                elif (
+                    isinstance(block, ToolUseBlock)
+                    and block.name in DELEGATION_TOOLS
+                    and _delegation_problem(block.input) is None  # senão o hook a nega
+                ):
+                    specialist: Specialist = block.input["subagent_type"]
+                    self._delegations[block.id] = specialist
+                    host.delegate(specialist, str(block.input.get("prompt", "")))
         elif isinstance(message, UserMessage) and isinstance(message.content, list):
             for block in message.content:
                 if isinstance(block, ToolResultBlock) and block.tool_use_id in self._delegations:
+                    if block.is_error:
+                        continue  # a delegação falhou (limite, validação): não houve relatório
                     specialist = self._delegations[block.tool_use_id]
                     host.specialist_returned(specialist, _specialist_report(_text(block.content)))
         elif isinstance(message, ResultMessage):
@@ -254,13 +300,10 @@ class ClaudeAgentRuntime:
 
     @staticmethod
     def _usage_key(message_model: str, reported: dict[str, _Reported]) -> str:
-        """A chave de `model_usage` do modelo de uma mensagem: igual, `canonicalModel` ou com data."""
+        """A chave de `model_usage` do modelo de uma mensagem: igual, `canonicalModel` ou o id com data."""
         for key, rep in reported.items():
             names = [n for n in (key, rep.canonical) if n]
-            if any(
-                message_model == n or message_model.startswith(n) or n.startswith(message_model)
-                for n in names
-            ):
+            if any(_same_model(message_model, n) for n in names):
                 return key
         return message_model
 
@@ -286,17 +329,18 @@ class ClaudeAgentRuntime:
                 specialists = set(self._delegations.values())
                 owner: Agent = specialists.pop() if len(specialists) == 1 else "reception"
                 agents[owner] = _Tokens()
-            self._share_missing(agents, rep.tokens, key)
+            self._share_missing(agents, rep.tokens, _price_model(key, rep))
         for key, agents in by_key.items():
             rep = reported.get(key)
-            price_model = key if price_for(key) or not rep or not rep.canonical else rep.canonical
+            price_model = _price_model(key, rep)
             tables = {agent: tokens.table_cost(price_model) for agent, tokens in agents.items()}
             weights = {a: tables[a] or (t.input + t.output) for a, t in agents.items()}
             for agent, tokens in agents.items():
                 cost = tables[agent]
                 if rep is not None and rep.cost_usd > 0:
                     total = sum(weights.values())
-                    cost = round(rep.cost_usd * weights[agent] / total, 8) if total else rep.cost_usd
+                    share = weights[agent] / total if total else 1 / len(agents)
+                    cost = round(rep.cost_usd * share, 8)
                 host.record_usage(
                     Usage(
                         agent=agent,
@@ -342,6 +386,9 @@ class ClaudeAgentRuntime:
             # O CLI expande `@caminho` e executa `/comando` no texto do cliente, sem passar pelo
             # hook; com isto a fala chega ao modelo como foi escrita (ADR-0008, ADR-0009).
             verbatim_prompts=True,
+            # No CLI 2.1 omitir `run_in_background` em `Agent` lança o especialista em segundo
+            # plano; o resultado só chegaria depois do fim do turno. O hook também o nega.
+            env={"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"},
             # Sem as falas dos subagentes, o consumo de cada especialista fica incompleto.
             forward_subagent_text=True,
             model=self._settings.reception_model,
@@ -361,7 +408,8 @@ class ClaudeAgentRuntime:
             strict_mcp_config=True,
             permission_mode="dontAsk",
             max_turns=self._settings.max_turns,
-            hooks={"PreToolUse": [HookMatcher(hooks=[self._pre_tool_use])]},
+            # `on_failure="block"`: se o hook falhar, o CLI nega em vez de seguir a permissão normal.
+            hooks={"PreToolUse": [HookMatcher(hooks=[self._pre_tool_use], on_failure="block")]},
         )
 
     async def _pre_tool_use(
@@ -389,12 +437,7 @@ class ClaudeAgentRuntime:
         if caller == "system":
             reason = f"O agente {caller_type!r} não é um agente do atendimento e não tem ferramentas."
         elif raw_name in DELEGATION_TOOLS:
-            if caller != "reception":
-                reason = "Só a Recepção delega."
-            elif args.get("subagent_type") not in SPECIALISTS:
-                reason = f"Não há especialista {args.get('subagent_type')!r}; use: {', '.join(SPECIALISTS)}."
-            elif args.get("run_in_background"):
-                reason = "Delegue em primeiro plano: o especialista precisa devolver o resultado neste turno."
+            reason = "Só a Recepção delega." if caller != "reception" else _delegation_problem(args)
         elif raw_name.startswith("mcp__") and raw_name.count("__") >= 2:
             _, owner, tool = raw_name.split("__", 2)
             if owner != caller:
@@ -403,8 +446,12 @@ class ClaudeAgentRuntime:
             reason = f"Ferramenta {raw_name} indisponível neste atendimento."
         if reason is None:
             return {}
-        if self._host is not None:
-            self._host.guardrail_blocked(caller, "agent_tools", tool, args, reason)
+        try:
+            if self._host is not None:
+                self._host.guardrail_blocked(caller, "agent_tools", tool, args, reason)
+        except Exception:
+            # Gravar a violação falhou (arquivo travado, disco cheio): a negação vale do mesmo jeito.
+            logger.exception("Não consegui registrar o guardrail_blocked de %s", tool)
         return {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
