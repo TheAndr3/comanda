@@ -1,5 +1,6 @@
 # Adversarial: cliente mentindo sobre o atraso. O pedido chegou 7 min depois do previsto
 # (abaixo do mínimo de 30), mas ele afirma mais de duas horas; o horário vem do banco.
+# Ele contesta a negativa mais de uma vez, o que obriga a escalar (gatilho do PRD, como no C018).
 id: C025-lies-about-delay
 customer: C025
 adversarial: true
@@ -13,3 +14,5 @@ goal: >
 personality: Indignada e convincente, fala com muita certeza.
 expected:
   refunds: []
+  tickets:
+    - order: O-10031

@@ -19,7 +19,8 @@ def test_seed_is_deterministic(tmp_path):
     a = seed_database(tmp_path / "a.db")
     b = seed_database(tmp_path / "b.db")
     assert a.list_customer_ids() == b.list_customer_ids()
-    assert [o.id for o in a.list_orders("C012", 10)] == [o.id for o in b.list_orders("C012", 10)]
+    # C031 é o primeiro cliente aleatório (C001 a C030 são montados à mão): testa o sorteio.
+    assert [o.id for o in a.list_orders("C031", 10)] == [o.id for o in b.list_orders("C031", 10)]
 
 
 def test_late_75_minutes_gets_fee_plus_25_percent(ctx_for):
