@@ -104,8 +104,9 @@ def _print_summary(metrics: Metrics, quota: dict[str, QuotaUse]) -> None:
         left_out = ", ".join(metrics.unjudged_scenarios) or "nenhum"
         print(
             f"Falha do juiz em {metrics.judge_errors} atendimento(s); sem veredito: {left_out}. "
-            "Ficam fora da taxa de aprovação, da resolução sem humano, das violações e do pass^3, "
-            "e a rodada sai com código 1."
+            "Sem veredito não contam nas violações; um cenário sem nenhum atendimento julgado fica "
+            "fora das taxas, e no pass^3 só sai da conta se nenhum atendimento julgado reprovou. "
+            "A rodada sai com código 1."
         )
     if metrics.errored_attendances:
         print(

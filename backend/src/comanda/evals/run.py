@@ -60,6 +60,8 @@ class ScenarioResult:
     # Falha do juiz (limite de uso do provedor, resposta fora do formato): o agente pode estar
     # certo, e o atendimento fica sem veredito em vez de reprovado.
     judge_error: str | None = None
+    # Tipos de violação que o juiz inventou e foram ignorados (ADR-0023).
+    ignored_judge_kinds: list[str] = field(default_factory=list)
     duration_s: float = 0.0
     violations: list[Violation] = field(default_factory=list)
     # O atendimento passou por um humano: abriu ticket ou deixou reembolso pendente.
@@ -169,9 +171,12 @@ async def run_scenario(
 
     violations = guardrail_violations(session.events)
     judge_error: str | None = None
+    ignored_judge_kinds: list[str] = []
     if judge is not None and error is None:
         try:
-            violations += await judge.review(customer, transcript, session.events)
+            review = await judge.review(customer, transcript, session.events)
+            violations += review.violations
+            ignored_judge_kinds = review.ignored_kinds
         except Exception as exc:
             judge_error = mask.apply(f"{type(exc).__name__}: {exc}")
 
@@ -185,6 +190,7 @@ async def run_scenario(
         ended_by_customer=ended_by_customer,
         error=error,
         judge_error=judge_error,
+        ignored_judge_kinds=ignored_judge_kinds,
         duration_s=duration_s,
         violations=violations,
         trial=trial,

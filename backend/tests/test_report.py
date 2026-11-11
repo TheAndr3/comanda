@@ -21,6 +21,7 @@ def result(
     quota: tuple[QuotaReading, ...] = (),
     judge_error: str | None = None,
     error: str | None = None,
+    ignored_judge_kinds: tuple[str, ...] = (),
 ) -> ScenarioResult:
     return ScenarioResult(
         scenario_id=scenario_id,
@@ -36,6 +37,7 @@ def result(
         quota=list(quota),
         judge_error=judge_error,
         error=error,
+        ignored_judge_kinds=list(ignored_judge_kinds),
     )
 
 
@@ -219,3 +221,23 @@ def test_attendances_that_broke_are_left_out_of_the_cost_and_latency_means():
 
     assert (metrics.mean_cost_usd, metrics.mean_latency_s) == (0.02, 2.0)
     assert metrics.errored_attendances == 1
+
+
+def test_violation_kinds_the_judge_made_up_are_counted_in_the_metrics_and_the_report(tmp_path):
+    results = [
+        result("A", ignored_judge_kinds=("tom_rude",)),
+        result("B", ignored_judge_kinds=("tom_rude", "gíria")),
+    ]
+
+    metrics = compute_metrics(results)
+    report = build_report(
+        results,
+        created_at=datetime(2026, 11, 12, tzinfo=UTC),
+        commit="abc1234",
+        models={},
+        subset=None,
+    )
+
+    assert metrics.ignored_judge_kinds == {"gíria": 1, "tom_rude": 2}
+    assert report["metrics"]["ignored_judge_kinds"] == {"gíria": 1, "tom_rude": 2}
+    assert report["attendances"][1]["ignored_judge_kinds"] == ["tom_rude", "gíria"]

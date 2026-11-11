@@ -493,6 +493,7 @@ async def test_a_violation_of_an_unknown_kind_is_ignored_and_the_real_ones_are_k
 
     assert result.judge_error is None
     assert kinds(result) == [("promised_refund", "grave")]
+    assert result.ignored_judge_kinds == ["tom_rude"]
 
 
 class ClosingRuntime(ScriptedRuntime):

@@ -1,7 +1,8 @@
 """Métricas e relatório de uma rodada de avaliação (ADR-0011, ADR-0014, ADR-0015, ADR-0023).
 
-As taxas por cenário usam o primeiro atendimento com veredito de cada cenário, para que as
-repetições do pass^3 não pesem mais que os outros cenários. As violações contam todos os
+As taxas por cenário usam o primeiro atendimento com veredito de cada cenário (se o 1º ficou
+sem veredito por falha do juiz, vale o seguinte), para que as repetições do pass^3 não pesem
+mais que os outros cenários. As violações contam todos os
 atendimentos lidos pelo juiz. Custo e latência são médias por atendimento e usam os
 atendimentos que terminaram sem erro.
 """
@@ -40,12 +41,16 @@ class Metrics:
     pass3: float | None
     pass3_scenarios: int
     failed_scenarios: list[str] = field(default_factory=list)
-    # Atendimentos em que o juiz falhou, e os cenários que por isso ficaram sem veredito: fora da
-    # taxa de aprovação, da resolução sem humano, das violações e do pass^3.
+    # Atendimentos em que o juiz falhou (`judge_errors`) e quais são (`unjudged_scenarios`). Um
+    # cenário sem nenhum atendimento com veredito fica fora da taxa de aprovação e da resolução sem
+    # humano; um atendimento sem veredito não conta nas violações; no pass^3, um cenário com lacuna
+    # só sai da conta se nenhum atendimento julgado reprovou, senão vale 0.
     judge_errors: int = 0
     unjudged_scenarios: list[str] = field(default_factory=list)
     # Atendimentos que quebraram (erro do runtime ou do provedor): fora das médias de custo e latência.
     errored_attendances: int = 0
+    # Tipos de violação que o juiz inventou e foram ignorados, com a contagem.
+    ignored_judge_kinds: dict[str, int] = field(default_factory=dict)
 
 
 def _mean(values: Sequence[float]) -> float:
@@ -110,6 +115,7 @@ def compute_metrics(results: Sequence[ScenarioResult]) -> Metrics:
         judge_errors=sum(r.judge_error is not None for r in results),
         unjudged_scenarios=[_label(r) for r in results if r.inconclusive],
         errored_attendances=sum(r.error is not None for r in results),
+        ignored_judge_kinds=dict(sorted(Counter(k for r in results for k in r.ignored_judge_kinds).items())),
     )
 
 
@@ -167,6 +173,7 @@ def _attendance(r: ScenarioResult) -> dict[str, Any]:
         "ended_by_customer": r.ended_by_customer,
         "error": r.error,
         "judge_error": r.judge_error,
+        "ignored_judge_kinds": r.ignored_judge_kinds,
         "mismatches": r.mismatches,
         "violations": [asdict(v) for v in r.violations],
         "cost_usd": r.cost_usd,
