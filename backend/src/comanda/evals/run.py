@@ -21,7 +21,7 @@ from ..data.seed import seed_database
 from ..runtime import AgentRuntime, EventType, QuotaReading, TraceEvent, start_session
 from ..runtime.masking import CustomersMask
 from .judge import Judge, Violation, guardrail_violations
-from .providers import Provider
+from .providers import Provider, ProviderError
 from .scenario import Scenario
 from .simulated_customer import NO_REPLY, SimulatedCustomer, TranscriptLine
 from .state import check_final_state, needed_human, take_baseline
@@ -65,6 +65,9 @@ class ScenarioResult:
     # Falha do juiz (limite de uso do provedor, resposta fora do formato): o agente pode estar
     # certo, e o atendimento fica sem veredito em vez de reprovado.
     judge_error: str | None = None
+    # Falha persistente do provedor do cliente simulado: a conversa parou por fora do agente, e
+    # o atendimento fica sem veredito, como na falha do juiz (ADR-0023).
+    customer_error: str | None = None
     # Tipos de violação que o juiz inventou e foram ignorados (ADR-0023).
     ignored_judge_kinds: list[str] = field(default_factory=list)
     duration_s: float = 0.0
@@ -83,14 +86,16 @@ class ScenarioResult:
 
     @property
     def passed(self) -> bool:
-        no_failure = self.error is None and not self.mismatches and not self.grave_violations
-        return no_failure and self.judge_error is None
+        return self._no_failure and self.judge_error is None and self.customer_error is None
 
     @property
     def inconclusive(self) -> bool:
-        """Só a falha do juiz impede o veredito: sem erro do agente, sem estado errado."""
-        no_failure = self.error is None and not self.mismatches and not self.grave_violations
-        return no_failure and self.judge_error is not None
+        """Só a falha do juiz ou do cliente simulado impede o veredito; o agente não falhou."""
+        return self._no_failure and (self.judge_error is not None or self.customer_error is not None)
+
+    @property
+    def _no_failure(self) -> bool:
+        return self.error is None and not self.mismatches and not self.grave_violations
 
     @property
     def grave_violations(self) -> list[Violation]:
@@ -155,10 +160,17 @@ async def run_scenario(
     response_times_s: list[float] = []
     ended_by_customer = False
     error: str | None = None
+    customer_error: str | None = None
     started = time.monotonic()
     try:
         for _ in range(max_turns):
-            message = await simulated.next_message(transcript)
+            try:
+                message = await simulated.next_message(transcript)
+            except ProviderError as exc:
+                # O provedor do cliente simulado não respondeu, mesmo depois das repetições: a
+                # conversa parou no meio por fora do agente, e o atendimento fica sem veredito.
+                customer_error = mask.apply(f"{type(exc).__name__}: {exc}")
+                break
             if message is None:
                 ended_by_customer = True
                 break
@@ -199,17 +211,19 @@ async def run_scenario(
     mismatches: list[str] = []
     human = False
     try:
-        violations = guardrail_violations(session.events)
-        if judge is not None and error is None:
-            try:
-                review = await judge.review(customer, transcript, session.events)
-                violations += review.violations
-                # O `kind` cru do juiz vai ao relatório versionado: passa pela máscara também.
-                ignored_judge_kinds = [mask.apply(kind) for kind in review.ignored_kinds]
-            except Exception as exc:
-                judge_error = mask.apply(f"{type(exc).__name__}: {exc}")
-        mismatches = check_final_state(repo, scenario, baseline)
-        human = needed_human(repo, baseline)
+        # Conversa interrompida pelo cliente simulado: nem o estado nem a fala dão veredito.
+        if customer_error is None:
+            violations = guardrail_violations(session.events)
+            if judge is not None and error is None:
+                try:
+                    review = await judge.review(customer, transcript, session.events)
+                    violations += review.violations
+                    # O `kind` cru do juiz vai ao relatório versionado: passa pela máscara também.
+                    ignored_judge_kinds = [mask.apply(kind) for kind in review.ignored_kinds]
+                except Exception as exc:
+                    judge_error = mask.apply(f"{type(exc).__name__}: {exc}")
+            mismatches = check_final_state(repo, scenario, baseline)
+            human = needed_human(repo, baseline)
     except Exception as exc:
         error = error or mask.apply(f"{type(exc).__name__}: {exc}")
     # O trecho citado de uma violação (other_customer_data) iria ao relatório versionado.
@@ -225,6 +239,7 @@ async def run_scenario(
         ended_by_customer=ended_by_customer,
         error=error,
         judge_error=judge_error,
+        customer_error=customer_error,
         ignored_judge_kinds=ignored_judge_kinds,
         duration_s=duration_s,
         violations=violations,

@@ -85,8 +85,11 @@ def _models(settings: Settings) -> dict[str, str]:
 def _print_result(result: ScenarioResult) -> None:
     verdict = "PASSOU" if result.passed else "REPROVOU"
     if result.inconclusive:
-        verdict = "SEM VEREDITO (falha do juiz)"
+        who = "do cliente simulado" if result.customer_error else "do juiz"
+        verdict = f"SEM VEREDITO (falha {who})"
     print(f"  {verdict} em {result.customer_turns} turnos, {result.duration_s:.1f} s")
+    if result.customer_error:
+        print(f"    - O cliente simulado falhou: {result.customer_error}")
     if result.judge_error:
         print(f"    - O juiz falhou: {result.judge_error}")
     for mismatch in result.mismatches:
@@ -95,7 +98,7 @@ def _print_result(result: ScenarioResult) -> None:
         print(f"    - Violação {v.severity}, {v.kind}: {v.detail}")
     if result.error:
         print(f"    - A conversa foi interrompida: {result.error}")
-    elif not result.ended_by_customer:
+    elif not result.ended_by_customer and not result.customer_error:
         print("    - O cliente simulado não encerrou a conversa antes do limite de turnos.")
     print(f"    Rastro: {result.trace_path}")
 
@@ -108,6 +111,12 @@ def _print_summary(metrics: Metrics, quota: dict[str, QuotaUse]) -> None:
             f"Falha do juiz em {metrics.judge_errors} atendimento(s); sem veredito: {left_out}. "
             "Sem veredito não contam nas violações; um cenário sem nenhum atendimento julgado fica "
             "fora das taxas, e no pass^3 só sai da conta se nenhum atendimento julgado reprovou. "
+            "A rodada sai com código 1."
+        )
+    if metrics.customer_errors:
+        print(
+            f"O cliente simulado falhou em {metrics.customer_errors} atendimento(s): ficam sem "
+            "veredito, como na falha do juiz, e fora das médias de custo e latência. "
             "A rodada sai com código 1."
         )
     if metrics.errored_attendances:

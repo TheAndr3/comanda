@@ -544,6 +544,43 @@ async def test_a_violation_of_an_unknown_kind_is_ignored_and_the_real_ones_are_k
     assert result.ignored_judge_kinds == ["tom_rude"]
 
 
+async def test_a_simulated_customer_whose_provider_fails_leaves_the_attendance_without_a_verdict(
+    tmp_path, settings
+):
+    # O provedor do cliente simulado responde a 1ª fala e depois não responde mais (limite de uso).
+    result = await run_scenario(
+        scenario(tmp_path),
+        runtime=refunding_runtime(),
+        provider=ScriptedProvider(["Meu pedido veio sem o refrigerante."]),
+        settings=settings,
+        judge=judge_says(("promised_refund", "Você tem direito a R$ 6,90 pelo refrigerante")),
+    )
+
+    assert result.customer_error is not None
+    assert result.error is None  # não foi o agente que falhou
+    assert result.mismatches == []  # a conversa parou no meio: o estado não diz nada
+    assert result.inconclusive and not result.passed
+    assert result.violations == []  # sem veredito, o juiz nem lê
+
+
+async def test_the_run_names_a_simulated_customer_failure_and_exits_with_1(tmp_path, settings, capsys):
+    write_scenarios(tmp_path / "scenarios", "C002-cut")
+
+    status = await run_eval(
+        replace(settings, scenarios_dir=tmp_path / "scenarios", results_dir=tmp_path / "results"),
+        subset=None,
+        runtime_factory=lambda _: refunding_runtime(),
+        provider=ScriptedProvider(["Meu pedido veio sem o refrigerante."]),
+        judge=no_violations(0),
+        commit="abc1234",
+    )
+
+    out = capsys.readouterr().out
+    assert status == 1
+    assert "SEM VEREDITO (falha do cliente simulado)" in out
+    assert "O cliente simulado falhou" in out
+
+
 class ClosingRuntime(ScriptedRuntime):
     def __init__(self, turns) -> None:
         super().__init__(turns)

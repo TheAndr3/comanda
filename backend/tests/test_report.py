@@ -20,6 +20,7 @@ def result(
     response_times_s: tuple[float, ...] = (),
     quota: tuple[QuotaReading, ...] = (),
     judge_error: str | None = None,
+    customer_error: str | None = None,
     error: str | None = None,
     ignored_judge_kinds: tuple[str, ...] = (),
 ) -> ScenarioResult:
@@ -36,6 +37,7 @@ def result(
         response_times_s=list(response_times_s),
         quota=list(quota),
         judge_error=judge_error,
+        customer_error=customer_error,
         error=error,
         ignored_judge_kinds=list(ignored_judge_kinds),
     )
@@ -221,6 +223,29 @@ def test_attendances_that_broke_are_left_out_of_the_cost_and_latency_means():
 
     assert (metrics.mean_cost_usd, metrics.mean_latency_s) == (0.02, 2.0)
     assert metrics.errored_attendances == 1
+
+
+def test_a_simulated_customer_failure_leaves_the_attendance_without_a_verdict_and_out_of_the_means(
+    tmp_path,
+):
+    cut = "ProviderError: Gemini respondeu 429"
+    results = [
+        result("A", cost_usd=0.02, response_times_s=(2.0,)),
+        # B: o cliente simulado parou no meio; a conversa cortada não diz nada do agente.
+        result("B", cost_usd=0.001, response_times_s=(9.0,), customer_error=cut),
+    ]
+
+    metrics = compute_metrics(results)
+    report = build_report(
+        results, created_at=datetime(2026, 11, 12, tzinfo=UTC), commit="abc1234", models={}, subset=None
+    )
+
+    assert (metrics.scenarios, metrics.passed, metrics.failed_scenarios) == (1, 1, [])
+    assert metrics.unjudged_scenarios == ["B"]
+    assert (metrics.customer_errors, metrics.judge_errors, metrics.errored_attendances) == (1, 0, 0)
+    assert (metrics.mean_cost_usd, metrics.mean_latency_s) == (0.02, 2.0)
+    assert metrics.total_cost_usd == 0.021
+    assert report["attendances"][1]["customer_error"] == cut
 
 
 def test_violation_kinds_the_judge_made_up_are_counted_in_the_metrics_and_the_report(tmp_path):

@@ -2,9 +2,10 @@
 
 As taxas por cenário usam o primeiro atendimento com veredito de cada cenário (se o 1º ficou
 sem veredito por falha do juiz, vale o seguinte), para que as repetições do pass^3 não pesem
-mais que os outros cenários. As violações contam todos os
+mais que os outros cenários. Fica sem veredito o atendimento em que o juiz falhou ou em que
+o provedor do cliente simulado parou de responder. As violações contam todos os
 atendimentos lidos pelo juiz. Custo e latência são médias por atendimento e usam os
-atendimentos que terminaram sem erro.
+atendimentos que terminaram sem erro e sem a conversa cortada.
 """
 
 from __future__ import annotations
@@ -47,6 +48,9 @@ class Metrics:
     # só sai da conta se nenhum atendimento julgado reprovou, senão vale 0.
     judge_errors: int = 0
     unjudged_scenarios: list[str] = field(default_factory=list)
+    # Atendimentos cortados porque o provedor do cliente simulado não respondeu: ficam sem
+    # veredito, como na falha do juiz, e fora das médias de custo e latência (conversa parcial).
+    customer_errors: int = 0
     # Atendimentos que quebraram (erro do runtime ou do provedor): fora das médias de custo e latência.
     errored_attendances: int = 0
     # Tipos de violação que o juiz inventou e foram ignorados, com a contagem.
@@ -96,8 +100,9 @@ def compute_metrics(results: Sequence[ScenarioResult]) -> Metrics:
         for model, t in r.tokens_by_model.items():
             tokens[model] = tokens.get(model, Tokens()) + t
 
-    # Custo e latência são médias dos atendimentos que terminaram: um que quebrou tem valores parciais.
-    complete = [r for r in results if r.error is None]
+    # Custo e latência são médias dos atendimentos que terminaram: um que quebrou, ou que o
+    # cliente simulado cortou, tem valores parciais.
+    complete = [r for r in results if r.error is None and r.customer_error is None]
     turn_times = [t for r in complete for t in r.response_times_s]
     return Metrics(
         scenarios=len(first),
@@ -116,6 +121,7 @@ def compute_metrics(results: Sequence[ScenarioResult]) -> Metrics:
         failed_scenarios=[r.scenario_id for r in first if not r.passed],
         judge_errors=sum(r.judge_error is not None for r in results),
         unjudged_scenarios=[_label(r) for r in results if r.inconclusive],
+        customer_errors=sum(r.customer_error is not None for r in results),
         errored_attendances=sum(r.error is not None for r in results),
         total_cost_usd=round(sum(r.cost_usd for r in results), 6),
         ignored_judge_kinds=dict(sorted(Counter(k for r in results for k in r.ignored_judge_kinds).items())),
@@ -176,6 +182,7 @@ def _attendance(r: ScenarioResult) -> dict[str, Any]:
         "ended_by_customer": r.ended_by_customer,
         "error": r.error,
         "judge_error": r.judge_error,
+        "customer_error": r.customer_error,
         "ignored_judge_kinds": r.ignored_judge_kinds,
         "mismatches": r.mismatches,
         "violations": [asdict(v) for v in r.violations],
