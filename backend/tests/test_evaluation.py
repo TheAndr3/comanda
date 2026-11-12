@@ -8,9 +8,11 @@ import json
 import subprocess
 from collections.abc import Sequence
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 from comanda.cli import main
+from comanda.domain.models import Customer
 from comanda.evals import (
     Judge,
     OllamaProvider,
@@ -24,6 +26,7 @@ from comanda.evals import run as run_module
 from comanda.evals.run import Tokens
 from comanda.evaluate import current_commit, run_eval
 from comanda.runtime import Delegate, QuotaReading, Return, Say, ScriptedRuntime, ToolCall, Usage
+from comanda.runtime.masking import CustomersMask
 
 MISSING_SODA = {"order_id": "O-10003", "issue": "missing_item", "item_ids": ["O-10003-3"]}
 
@@ -660,6 +663,26 @@ async def test_a_failure_after_the_conversation_keeps_the_cost_tokens_and_quota_
     assert [q.utilization for q in result.quota] == [0.2]
 
 
+async def test_a_malformed_usage_event_does_not_lose_the_attendance(tmp_path, settings, monkeypatch):
+    def malformed(*args, **kwargs):
+        raise KeyError("input_tokens")
+
+    monkeypatch.setattr(run_module, "_tokens_by_model", malformed)
+
+    result = await run_scenario(
+        scenario(tmp_path),
+        runtime=spending_runtime(),
+        provider=customer_says("Oi."),
+        settings=settings,
+        judge=judge_says(),
+    )
+
+    assert result.error is not None and "input_tokens" in result.error
+    assert result.cost_usd == 0.002  # o que deu para ler continua
+    assert [q.utilization for q in result.quota] == [0.2]
+    assert [line.text for line in result.transcript] == ["Oi.", "Certo."]
+
+
 class FailsToClose(ScriptedRuntime):
     async def aclose(self) -> None:
         raise RuntimeError("o CLI não fechou")
@@ -738,3 +761,52 @@ async def test_the_error_of_a_scenario_that_broke_is_masked_in_the_run_report(
     text = path.read_text(encoding="utf-8")
     assert customer.name not in text
     assert "falhou ao atender [nome]" in text
+
+
+async def test_a_seeding_failure_is_still_masked_with_the_seed_customers(
+    tmp_path, settings, repo, monkeypatch
+):
+    other = repo.get_customer("C001")
+    assert other is not None
+    seed = run_module.seed_database
+
+    def fails_on_the_scenario_db(path, *args, **kwargs):
+        if Path(path) == settings.db_path:
+            raise OSError(f"não consegui gravar o cliente {other.email}")
+        return seed(path, *args, **kwargs)
+
+    monkeypatch.setattr(run_module, "seed_database", fails_on_the_scenario_db)
+
+    result = await run_scenario(
+        scenario(tmp_path), runtime=ClosingRuntime([]), provider=customer_says("Oi."), settings=settings
+    )
+
+    assert result.error is not None
+    assert other.email not in result.error
+    assert "[email]" in result.error
+
+
+async def test_an_invented_violation_kind_is_masked_before_it_reaches_the_report(tmp_path, settings, repo):
+    other = repo.get_customer("C001")
+    assert other is not None
+
+    result = await run_scenario(
+        scenario(tmp_path),
+        runtime=refunding_runtime(),
+        provider=customer_says("Meu pedido veio sem o refrigerante.", "Pode sim."),
+        settings=settings,
+        judge=judge_says((f"citou {other.email}", "Posso registrar?")),
+    )
+
+    assert result.ignored_judge_kinds == ["citou [email]"]
+
+
+def test_an_email_is_masked_whole_even_when_part_of_it_is_another_customers_name():
+    created = datetime(2026, 1, 1, tzinfo=UTC)
+    carla = Customer("C901", "Carla Silva", "carla.silva@example.com", "+55 75 91111-2222", created)
+    # Outra Carla vem antes: o nome dela não pode comer metade do e-mail da primeira.
+    other = Customer("C902", "Carla Mendes", "cm@example.com", "+55 75 93333-4444", created)
+
+    masked = CustomersMask([other, carla]).apply("Escreva para carla.silva@example.com, Carla.")
+
+    assert masked == "Escreva para [email], [nome]."

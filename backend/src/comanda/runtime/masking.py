@@ -40,22 +40,29 @@ class PersonalDataMask:
 
     def __init__(self, customer: Customer) -> None:
         names = [customer.name, *(part for part in customer.name.split() if len(part) >= 3)]
-        self._rules: list[tuple[re.Pattern[str], str]] = [
+        # E-mail e telefone primeiro: um nome casaria com um pedaço do e-mail ("carla.silva@...").
+        self.contact_rules: list[tuple[re.Pattern[str], str]] = [
             (re.compile(re.escape(customer.email), re.IGNORECASE), "[email]"),
             (re.compile(_phone_pattern(customer.phone)), "[telefone]"),
-            *((re.compile(rf"\b{_accent_insensitive(name)}\b", re.IGNORECASE), "[nome]") for name in names),
+        ]
+        self.name_rules: list[tuple[re.Pattern[str], str]] = [
+            (re.compile(rf"\b{_accent_insensitive(name)}\b", re.IGNORECASE), "[nome]") for name in names
         ]
 
     def apply(self, value: Any) -> Any:
-        if isinstance(value, str):
-            for pattern, marker in self._rules:
-                value = pattern.sub(marker, value)
-            return value
-        if isinstance(value, dict):
-            return {key: self.apply(item) for key, item in value.items()}
-        if isinstance(value, list | tuple):
-            return [self.apply(item) for item in value]
+        return _apply([*self.contact_rules, *self.name_rules], value)
+
+
+def _apply(rules: list[tuple[re.Pattern[str], str]], value: Any) -> Any:
+    if isinstance(value, str):
+        for pattern, marker in rules:
+            value = pattern.sub(marker, value)
         return value
+    if isinstance(value, dict):
+        return {key: _apply(rules, item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_apply(rules, item) for item in value]
+    return value
 
 
 class _Repo(Protocol):
@@ -71,13 +78,16 @@ class CustomersMask:
     """
 
     def __init__(self, customers: Iterable[Customer] = ()) -> None:
-        self._masks = [PersonalDataMask(c) for c in customers]
+        masks = [PersonalDataMask(c) for c in customers]
+        # Os e-mails e telefones de todos antes de qualquer nome: o nome de um cliente não pode
+        # trocar um pedaço do e-mail de outro antes da regra do e-mail.
+        self._rules = [rule for m in masks for rule in m.contact_rules] + [
+            rule for m in masks for rule in m.name_rules
+        ]
 
     @classmethod
     def of(cls, repo: _Repo) -> CustomersMask:
         return cls(c for cid in repo.list_customer_ids() if (c := repo.get_customer(cid)) is not None)
 
     def apply(self, value: Any) -> Any:
-        for mask in self._masks:
-            value = mask.apply(value)
-        return value
+        return _apply(self._rules, value)

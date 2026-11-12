@@ -11,8 +11,10 @@ from __future__ import annotations
 import contextlib
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import TypeVar
 
 from ..config import Settings
 from ..data.seed import seed_database
@@ -25,6 +27,8 @@ from .simulated_customer import NO_REPLY, SimulatedCustomer, TranscriptLine
 from .state import check_final_state, needed_human, take_baseline
 
 MAX_CUSTOMER_TURNS = 12
+
+_T = TypeVar("_T")
 
 
 @dataclass(frozen=True)
@@ -123,7 +127,7 @@ async def run_scenario(
     max_turns: int = MAX_CUSTOMER_TURNS,
 ) -> ScenarioResult:
     """Roda um cenário. Recria o banco em `settings.db_path`: nunca aponte para o banco de uso."""
-    mask = CustomersMask()  # sem banco ainda, nada a mascarar
+    mask: CustomersMask | None = None  # sem banco ainda
     try:
         repo = seed_database(settings.db_path)
         # Mensagens de erro e trechos de violação podem citar dados de qualquer cliente.
@@ -140,6 +144,11 @@ async def run_scenario(
         # Cenário quebrado: fecha o runtime e reprova só ele; os outros da rodada seguem.
         with contextlib.suppress(Exception):  # o erro que vale é o de montagem
             await runtime.aclose()
+        if mask is None:
+            # O banco do cenário nem foi semeado: mascara com os clientes de um seed à parte.
+            mask = CustomersMask()
+            with contextlib.suppress(Exception):
+                mask = seeded_customers_mask()
         return failed_result(scenario, settings, trial, mask.apply(f"{type(exc).__name__}: {exc}"))
 
     transcript: list[TranscriptLine] = []
@@ -175,14 +184,14 @@ async def run_scenario(
             await runtime.aclose()
     duration_s = time.monotonic() - started
 
-    # O gasto sai primeiro: o que já rodou conta mesmo que algo adiante falhe.
-    cost_usd = _cost_usd(session.events)
-    tokens_by_model = _tokens_by_model(session.events)
-    quota = [
-        QuotaReading(e.data["window"], e.data["status"], e.data["utilization"], e.data["resets_at"])
-        for e in session.events
-        if e.type == EventType.QUOTA
-    ]
+    # O gasto sai primeiro: o que já rodou conta mesmo que algo adiante falhe. Cada parte à
+    # parte: um evento malformado reprova o atendimento, mas não zera o que deu para ler.
+    unreadable: list[str] = []
+    cost_usd = _read(lambda: _cost_usd(session.events), 0.0, unreadable)
+    tokens_by_model = _read(lambda: _tokens_by_model(session.events), {}, unreadable)
+    quota = _read(lambda: _quota(session.events), [], unreadable)
+    if unreadable:
+        error = error or mask.apply(unreadable[0])
 
     violations: list[Violation] = []
     judge_error: str | None = None
@@ -195,7 +204,8 @@ async def run_scenario(
             try:
                 review = await judge.review(customer, transcript, session.events)
                 violations += review.violations
-                ignored_judge_kinds = review.ignored_kinds
+                # O `kind` cru do juiz vai ao relatório versionado: passa pela máscara também.
+                ignored_judge_kinds = [mask.apply(kind) for kind in review.ignored_kinds]
             except Exception as exc:
                 judge_error = mask.apply(f"{type(exc).__name__}: {exc}")
         mismatches = check_final_state(repo, scenario, baseline)
@@ -231,6 +241,23 @@ def seeded_customers_mask() -> CustomersMask:
     """A máscara de todos os clientes do seed, para erros de quem nem chegou a abrir um banco."""
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         return CustomersMask.of(seed_database(Path(tmp) / "mask.db"))
+
+
+def _read(compute: Callable[[], _T], default: _T, failures: list[str]) -> _T:
+    """O valor de `compute`, ou `default` com a falha anotada em `failures`."""
+    try:
+        return compute()
+    except Exception as exc:
+        failures.append(f"{type(exc).__name__}: {exc}")
+        return default
+
+
+def _quota(events: list[TraceEvent]) -> list[QuotaReading]:
+    return [
+        QuotaReading(e.data["window"], e.data["status"], e.data["utilization"], e.data["resets_at"])
+        for e in events
+        if e.type == EventType.QUOTA
+    ]
 
 
 def _usage(events: list[TraceEvent]) -> list[dict]:
