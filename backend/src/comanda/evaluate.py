@@ -77,7 +77,7 @@ def _models(settings: Settings) -> dict[str, str]:
     return {
         "reception": settings.reception_model,
         "specialist": settings.specialist_model,
-        "simulated_customer": f"{settings.eval_provider}:{settings.gemini_model}",
+        "simulated_customer": f"{settings.eval_provider}:{settings.simulated_customer_model}",
         "judge": f"{settings.eval_provider}:{settings.judge_model}",
     }
 

@@ -13,6 +13,7 @@ from pathlib import Path
 from comanda.cli import main
 from comanda.evals import (
     Judge,
+    OllamaProvider,
     ProviderMessage,
     ScriptedProvider,
     load_scenario,
@@ -332,6 +333,49 @@ async def test_eval_writes_a_versioned_report_with_metrics_and_quota(tmp_path, s
     assert "pass^3: 100%" in out
     assert "Cota five_hour: 15% consumidos" in out
     assert str(path) in out
+
+
+async def test_an_ollama_run_records_the_provider_and_model_of_each_role(tmp_path, settings):
+    write_scenarios(tmp_path / "scenarios", "C002-once")
+    ollama = replace(
+        settings,
+        scenarios_dir=tmp_path / "scenarios",
+        results_dir=tmp_path / "results",
+        eval_provider="ollama",
+        ollama_model="qwen3:8b",
+        judge_model_override="qwen3:14b",
+    )
+
+    await run_eval(
+        ollama,
+        subset=None,
+        runtime_factory=lambda _: quota_runtime(0.1),
+        provider=ScriptedProvider(["Meu pedido veio sem o refrigerante.", "[FIM]"]),
+        judge=no_violations(1),
+        commit="abc1234",
+    )
+
+    [path] = (tmp_path / "results").glob("*.json")
+    models = json.loads(path.read_text(encoding="utf-8"))["models"]
+    assert (models["simulated_customer"], models["judge"]) == ("ollama:qwen3:8b", "ollama:qwen3:14b")
+
+
+def test_eval_with_ollama_configured_needs_no_gemini_key(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("COMANDA_EVAL_PROVIDER", "ollama")
+    monkeypatch.setenv("COMANDA_OLLAMA_MODEL", "qwen3:8b")
+    seen: dict[str, object] = {}
+
+    async def fake_run_eval(settings, subset, runtime_factory, provider, *, judge):
+        seen.update(subset=subset, provider=provider)
+        return 0
+
+    # Sem rodar os agentes do Claude: só a escolha do provedor pelo `comanda eval --subset`.
+    monkeypatch.setattr("comanda.cli.run_eval", fake_run_eval)
+
+    assert main(["eval", "--subset", "C002"]) == 0
+    assert seen["subset"] == ["C002"]
+    assert isinstance(seen["provider"], OllamaProvider)
 
 
 def test_eval_without_gemini_key_explains_how_to_set_it(monkeypatch, capsys):
