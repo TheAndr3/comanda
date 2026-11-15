@@ -1,5 +1,6 @@
 """Adaptador Gemini do cliente simulado, com resposta HTTP simulada: nenhum teste sai à rede."""
 
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
@@ -197,6 +198,23 @@ async def test_the_budget_counts_the_time_the_requests_took_not_only_the_waits(n
     # 60 s na 1ª, 1 s de espera e o que sobra dos 90 s na 2ª; a 3ª nem começa.
     assert no_backoff == [1]
     assert timeouts == [60, 29]
+
+
+async def test_an_attempt_that_never_answers_is_cut_at_the_budget():
+    async def silent(_: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(5)  # o servidor aceita a conexão e não responde
+        return OK
+
+    provider = GeminiProvider(
+        "gemini-test",
+        api_key=FAKE_KEY,
+        transport=httpx.MockTransport(silent),
+        max_retries=0,
+        max_total_wait_s=0.2,
+    )
+
+    with pytest.raises(ProviderError, match="TimeoutError"):
+        await asyncio.wait_for(provider.complete("sistema", [ProviderMessage("user", "oi")]), 2)
 
 
 @pytest.mark.parametrize("details", [5, "34s", {"retryDelay": "34s"}, None])

@@ -39,6 +39,10 @@ DEFAULT_SUBSET = ("C002-missing-soda", "C003-lost-order", "C006-outside-window")
 
 RuntimeFactory = Callable[[Scenario], AgentRuntime]
 
+# Fora do `-dirty`: os relatórios de rodadas ainda não commitados e o diretório do Claude Code
+# (worktrees de agentes, configuração local), que não mudam o código da rodada.
+NOT_RUN_CODE = ("evals/results", ".claude")
+
 
 def select_scenarios(scenarios: list[Scenario], subset: Sequence[str] | None) -> list[Scenario]:
     """Os cenários pedidos, por id ou por cliente; `subset` vazio é o `DEFAULT_SUBSET`."""
@@ -51,24 +55,21 @@ def select_scenarios(scenarios: list[Scenario], subset: Sequence[str] | None) ->
     return [s for s in scenarios if s.id in wanted or s.customer_id in wanted]
 
 
-# Relatórios de rodadas ainda não commitados: não tornam o código da rodada seguinte `-dirty`.
-RESULTS_PATH = "evals/results"
-
-
 def current_commit(root: Path = REPO_ROOT) -> str:
     """O commit do repositório, com `-dirty` se há mudança fora de commit; `unknown` sem git.
 
-    Conta também arquivo novo ainda não adicionado, que muda o código da rodada. Só os
-    relatórios em `RESULTS_PATH` ficam de fora: o de uma rodada ainda não commitado deixaria
-    todos os seguintes marcados como `-dirty` sem motivo. Arquivos ignorados pelo git não contam.
+    Conta também arquivo novo ainda não adicionado, que muda o código da rodada. Ficam de fora
+    os caminhos de `NOT_RUN_CODE`: o relatório de uma rodada ainda não commitado deixaria todos
+    os seguintes marcados como `-dirty` sem motivo. Arquivos ignorados pelo git não contam.
     """
     git = ["git", "-C", str(root)]
+    excluded = [f":(exclude){path}" for path in NOT_RUN_CODE]
     try:
         sha = subprocess.run(
             [*git, "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True
         )
         status = subprocess.run(
-            [*git, "status", "--porcelain", "--", ".", f":(exclude){RESULTS_PATH}"],
+            [*git, "status", "--porcelain", "--", ".", *excluded],
             capture_output=True,
             text=True,
             check=True,

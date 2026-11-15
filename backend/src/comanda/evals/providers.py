@@ -121,9 +121,12 @@ class GeminiProvider:
                     spent += wait
                 started = self._clock()
                 try:
+                    # O timeout do httpx vale por fase (conexão, cada leitura); o `asyncio.timeout`
+                    # é o que garante o teto da tentativa inteira.
                     timeout = min(REQUEST_TIMEOUT_S, self._max_total_wait_s - spent)
-                    response = await client.post(url, json=body, headers=headers, timeout=timeout)
-                except httpx.TransportError as exc:
+                    async with asyncio.timeout(timeout):
+                        response = await client.post(url, json=body, headers=headers, timeout=timeout)
+                except (httpx.TransportError, TimeoutError) as exc:
                     response, failure, hint = None, str(exc) or type(exc).__name__, None
                     continue
                 finally:

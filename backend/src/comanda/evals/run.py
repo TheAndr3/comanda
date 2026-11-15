@@ -211,9 +211,10 @@ async def run_scenario(
     mismatches: list[str] = []
     human = False
     try:
+        # Os bloqueios de guardrail vêm do Rastro e valem mesmo com a conversa cortada.
+        violations = guardrail_violations(session.events)
         # Conversa interrompida pelo cliente simulado: nem o estado nem a fala dão veredito.
         if customer_error is None:
-            violations = guardrail_violations(session.events)
             if judge is not None and error is None:
                 try:
                     review = await judge.review(customer, transcript, session.events)

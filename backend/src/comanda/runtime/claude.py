@@ -173,12 +173,12 @@ def _split(total: int, weights: list[float]) -> list[int]:
     return shares
 
 
-def _size(usage: dict[str, Any]) -> tuple[int, int]:
+def _completeness(usage: dict[str, Any]) -> tuple[int, int]:
     """Para escolher a repetição mais completa de uma resposta: a saída, depois a entrada."""
-    entrance = sum(
+    input_total = sum(
         usage.get(f) or 0 for f in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
     )
-    return usage.get("output_tokens") or 0, entrance
+    return usage.get("output_tokens") or 0, input_total
 
 
 def tool_name(agent: Agent, tool: str) -> str:
@@ -315,7 +315,7 @@ class ClaudeAgentRuntime:
             self._tokens.setdefault(key, _Tokens()).add(message.usage)
             return
         seen = self._by_message.get(message.message_id)
-        if seen is None or _size(message.usage) >= _size(seen[1]):
+        if seen is None or _completeness(message.usage) >= _completeness(seen[1]):
             self._by_message[message.message_id] = (key, message.usage)
 
     def _turn_tokens(self) -> dict[tuple[Agent, str], _Tokens]:

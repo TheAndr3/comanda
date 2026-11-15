@@ -48,9 +48,10 @@ class PersonalDataMask:
         self.name_rules: list[tuple[re.Pattern[str], str]] = [
             (re.compile(rf"\b{_accent_insensitive(name)}\b", re.IGNORECASE), "[nome]") for name in names
         ]
+        self._rules = [*self.contact_rules, *self.name_rules]
 
     def apply(self, value: Any) -> Any:
-        return _apply([*self.contact_rules, *self.name_rules], value)
+        return _apply(self._rules, value)
 
 
 def _apply(rules: list[tuple[re.Pattern[str], str]], value: Any) -> Any:

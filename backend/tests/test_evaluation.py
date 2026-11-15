@@ -410,6 +410,10 @@ def test_an_uncommitted_report_does_not_make_the_commit_dirty(tmp_path):
     (root / "evals" / "results").mkdir(parents=True)
     (root / "evals" / "results" / "20261112T150000Z-abc1234.json").write_text("{}", encoding="utf-8")
 
+    # Nem as worktrees e configurações locais do Claude Code, que não mudam o código da rodada.
+    (root / ".claude" / "worktrees" / "agent-1").mkdir(parents=True)
+    (root / ".claude" / "worktrees" / "agent-1" / "x.py").write_text("x = 1\n", encoding="utf-8")
+
     assert not current_commit(root).endswith("-dirty")
 
     (root / "README.md").write_text("dois\n", encoding="utf-8")
