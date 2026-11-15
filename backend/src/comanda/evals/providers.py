@@ -2,7 +2,7 @@
 
 Um provedor recebe uma instrução de sistema e a conversa até aqui e devolve o próximo texto
 do modelo. Os papéis são os do próprio modelo: `assistant` é o que ele já disse e `user` é o
-que o outro lado disse. Adaptadores: Gemini (camada gratuita) e roteirizado (testes).
+que o outro lado disse. Adaptadores: Gemini (camada gratuita), Ollama (local) e roteirizado (testes).
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from typing import Any, Literal, Protocol
 
 import httpx
 
-from ..config import Settings
+from ..config import OLLAMA_DEFAULT_HOST, OLLAMA_DEFAULT_NUM_CTX, Settings
 
 GEMINI_API_KEY_ENV = "GEMINI_API_KEY"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -144,7 +144,13 @@ def provider_from_settings(settings: Settings, model: str | None = None) -> Prov
     """O provedor escolhido por `COMANDA_EVAL_PROVIDER`; sem `model`, o do cliente simulado."""
     if settings.eval_provider == "gemini":
         return GeminiProvider(model or settings.gemini_model)
-    raise ProviderError(f"Provedor de avaliação desconhecido: {settings.eval_provider}. Use 'gemini'.")
+    if settings.eval_provider == "ollama":
+        return OllamaProvider(
+            model or settings.ollama_model, host=settings.ollama_host, num_ctx=settings.ollama_num_ctx
+        )
+    raise ProviderError(
+        f"Provedor de avaliação desconhecido: {settings.eval_provider}. Use 'gemini' ou 'ollama'."
+    )
 
 
 def _gemini_text(payload: dict[str, Any]) -> str:
@@ -157,4 +163,62 @@ def _gemini_text(payload: dict[str, Any]) -> str:
     if not text:
         reason = candidates[0].get("finishReason", "texto vazio")
         raise ProviderError(f"Gemini não devolveu texto ({reason}).")
+    return text
+
+
+# Raciocínio que modelos como qwen3 e deepseek-r1 põem no texto; como os `thought` do Gemini, não é fala.
+_THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
+
+
+class OllamaProvider:
+    """Modelo open source local pelo `/api/chat` do Ollama, sem chave e sem streaming."""
+
+    def __init__(
+        self,
+        model: str,
+        host: str = OLLAMA_DEFAULT_HOST,
+        num_ctx: int = OLLAMA_DEFAULT_NUM_CTX,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self.model = model
+        self.host = host.rstrip("/")
+        self._num_ctx = num_ctx
+        self._transport = transport
+
+    def __repr__(self) -> str:
+        return f"OllamaProvider(model={self.model!r}, host={self.host!r})"
+
+    async def complete(self, system: str, messages: Sequence[ProviderMessage]) -> str:
+        body: dict[str, Any] = {
+            "model": self.model,
+            "stream": False,
+            "options": {"num_ctx": self._num_ctx},
+            "messages": [
+                {"role": "system", "content": system},
+                *({"role": m.role, "content": m.text} for m in messages),
+            ],
+        }
+        try:
+            async with httpx.AsyncClient(transport=self._transport, timeout=300) as client:
+                response = await client.post(f"{self.host}/api/chat", json=body)
+        except httpx.TransportError as exc:
+            raise ProviderError(
+                f"Ollama inacessível em {self.host}: {str(exc) or type(exc).__name__}. Rode `ollama serve`."
+            ) from exc
+        if response.status_code != 200:
+            raise ProviderError(f"Ollama respondeu {response.status_code}: {response.text[:300]}")
+        return _ollama_text(response)
+
+
+def _ollama_text(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    message = payload.get("message") if isinstance(payload, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    text = _THINK_BLOCK.sub("", content).strip() if isinstance(content, str) else ""
+    if not text:
+        reason = payload.get("done_reason", "texto vazio") if isinstance(payload, dict) else "sem JSON"
+        raise ProviderError(f"Ollama não devolveu texto ({reason}): {response.text[:300]}")
     return text

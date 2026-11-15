@@ -9,6 +9,10 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # Raiz do repositório: `evals/` fica fora do pacote Python, ao lado de `backend/` e `web/`.
 REPO_ROOT = PROJECT_ROOT.parent
+OLLAMA_DEFAULT_HOST = "http://localhost:11434"
+# Janela de contexto pedida ao Ollama. A padrão dele pode ser 4096 tokens, e o que passa é cortado
+# do começo sem aviso: o juiz perderia a instrução de sistema (política e formato da resposta).
+OLLAMA_DEFAULT_NUM_CTX = 16384
 
 
 def _env_int(name: str, default: int) -> int:
@@ -45,16 +49,28 @@ class Settings:
     )
     eval_provider: str = field(default_factory=lambda: os.getenv("COMANDA_EVAL_PROVIDER", "gemini"))
     gemini_model: str = field(default_factory=lambda: os.getenv("COMANDA_GEMINI_MODEL", "gemini-3.8-flash"))
-    # O juiz usa o mesmo provedor do cliente simulado, com modelo próprio (ADR-0023).
-    judge_model: str = field(
-        default_factory=lambda: os.getenv(
-            "COMANDA_JUDGE_MODEL", os.getenv("COMANDA_GEMINI_MODEL", "gemini-3.8-flash")
-        )
+    # Ollama: modelo já baixado (`ollama pull`), host e janela de contexto pedida (ADR-0026).
+    ollama_model: str = field(default_factory=lambda: os.getenv("COMANDA_OLLAMA_MODEL", "qwen3:8b"))
+    ollama_host: str = field(default_factory=lambda: os.getenv("COMANDA_OLLAMA_HOST", OLLAMA_DEFAULT_HOST))
+    ollama_num_ctx: int = field(
+        default_factory=lambda: _env_int("COMANDA_OLLAMA_NUM_CTX", OLLAMA_DEFAULT_NUM_CTX)
     )
+    # O juiz usa o mesmo provedor do cliente simulado, com modelo próprio (ADR-0023). Sem
+    # `COMANDA_JUDGE_MODEL`, `judge_model` é o modelo do cliente simulado nesse provedor.
+    judge_model_override: str | None = field(default_factory=lambda: os.getenv("COMANDA_JUDGE_MODEL") or None)
     # Relatórios versionados das rodadas de avaliação (ADR-0015).
     results_dir: Path = field(
         default_factory=lambda: Path(os.getenv("COMANDA_RESULTS", REPO_ROOT / "evals" / "results"))
     )
+
+    @property
+    def simulated_customer_model(self) -> str:
+        """O modelo do cliente simulado no provedor escolhido em `COMANDA_EVAL_PROVIDER`."""
+        return self.ollama_model if self.eval_provider == "ollama" else self.gemini_model
+
+    @property
+    def judge_model(self) -> str:
+        return self.judge_model_override or self.simulated_customer_model
 
 
 def get_settings() -> Settings:
