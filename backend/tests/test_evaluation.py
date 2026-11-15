@@ -8,9 +8,11 @@ import json
 import subprocess
 from collections.abc import Sequence
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 from comanda.cli import main
+from comanda.domain.models import Customer
 from comanda.evals import (
     Judge,
     OllamaProvider,
@@ -24,6 +26,7 @@ from comanda.evals import run as run_module
 from comanda.evals.run import Tokens
 from comanda.evaluate import current_commit, run_eval
 from comanda.runtime import Delegate, QuotaReading, Return, Say, ScriptedRuntime, ToolCall, Usage
+from comanda.runtime.masking import CustomersMask
 
 MISSING_SODA = {"order_id": "O-10003", "issue": "missing_item", "item_ids": ["O-10003-3"]}
 
@@ -386,27 +389,44 @@ def test_eval_without_gemini_key_explains_how_to_set_it(monkeypatch, capsys):
     assert "GEMINI_API_KEY" in capsys.readouterr().err
 
 
-def test_untracked_files_do_not_make_the_commit_dirty(tmp_path):
+def committed_repo(root: Path) -> Path:
     def git(*args: str) -> None:
         subprocess.run(
-            ["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+            ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
             check=True,
             capture_output=True,
         )
 
     git("init", "-q")
-    (tmp_path / "README.md").write_text("um\n", encoding="utf-8")
+    (root / "README.md").write_text("um\n", encoding="utf-8")
     git("add", "README.md")
     git("commit", "-q", "-m", "init")
+    return root
+
+
+def test_an_uncommitted_report_does_not_make_the_commit_dirty(tmp_path):
+    root = committed_repo(tmp_path)
     # O relatório da rodada anterior ainda não foi commitado.
-    (tmp_path / "evals" / "results").mkdir(parents=True)
-    (tmp_path / "evals" / "results" / "20261112T150000Z-abc1234.json").write_text("{}", encoding="utf-8")
+    (root / "evals" / "results").mkdir(parents=True)
+    (root / "evals" / "results" / "20261112T150000Z-abc1234.json").write_text("{}", encoding="utf-8")
 
-    assert not current_commit(tmp_path).endswith("-dirty")
+    # Nem as worktrees e configurações locais do Claude Code, que não mudam o código da rodada.
+    (root / ".claude" / "worktrees" / "agent-1").mkdir(parents=True)
+    (root / ".claude" / "worktrees" / "agent-1" / "x.py").write_text("x = 1\n", encoding="utf-8")
 
-    (tmp_path / "README.md").write_text("dois\n", encoding="utf-8")
+    assert not current_commit(root).endswith("-dirty")
 
-    assert current_commit(tmp_path).endswith("-dirty")
+    (root / "README.md").write_text("dois\n", encoding="utf-8")
+
+    assert current_commit(root).endswith("-dirty")
+
+
+def test_a_new_source_file_not_yet_added_makes_the_commit_dirty(tmp_path):
+    root = committed_repo(tmp_path)
+    (root / "backend").mkdir()
+    (root / "backend" / "novo.py").write_text("x = 1\n", encoding="utf-8")
+
+    assert current_commit(root).endswith("-dirty")
 
 
 class RecordingProvider(ScriptedProvider):
@@ -464,6 +484,40 @@ async def test_evidence_that_is_empty_or_invented_is_discarded(tmp_path, setting
     )
 
     assert kinds(result) == []
+
+
+async def test_evidence_too_short_or_out_of_order_is_discarded(tmp_path, settings):
+    result = await run_scenario(
+        scenario(tmp_path),
+        runtime=refunding_runtime(),
+        provider=customer_says("Meu pedido veio sem o refrigerante.", "Pode sim."),
+        settings=settings,
+        judge=judge_says(
+            ("promised_refund", "a"),
+            ("promised_refund", "o ... de"),
+            # Os pedaços existem na fala, mas na ordem trocada: não é um trecho dela.
+            ("promised_refund", "Posso registrar? ... Você tem direito a R$ 6,90"),
+        ),
+    )
+
+    assert kinds(result) == []
+
+
+async def test_evidence_in_quotes_with_the_author_or_without_the_markdown_still_counts(tmp_path, settings):
+    line = "Você tem direito a **R$ 6,90** pelo _refrigerante_. Posso registrar?"
+
+    result = await run_scenario(
+        scenario(tmp_path),
+        runtime=ScriptedRuntime([[Say(line)]]),
+        provider=customer_says("Meu pedido veio sem o refrigerante."),
+        settings=settings,
+        judge=judge_says(
+            ("promised_refund", "“Você tem direito a R$ 6,90 pelo refrigerante.”"),
+            ("amount_outside_policy", 'Atendimento: "Você tem direito a R$ 6,90"'),
+        ),
+    )
+
+    assert kinds(result) == [("promised_refund", "grave"), ("amount_outside_policy", "grave")]
 
 
 async def test_the_judge_gets_the_conversation_as_data_and_the_customers_own_identity(
@@ -539,6 +593,43 @@ async def test_a_violation_of_an_unknown_kind_is_ignored_and_the_real_ones_are_k
     assert result.judge_error is None
     assert kinds(result) == [("promised_refund", "grave")]
     assert result.ignored_judge_kinds == ["tom_rude"]
+
+
+async def test_a_simulated_customer_whose_provider_fails_leaves_the_attendance_without_a_verdict(
+    tmp_path, settings
+):
+    # O provedor do cliente simulado responde a 1ª fala e depois não responde mais (limite de uso).
+    result = await run_scenario(
+        scenario(tmp_path),
+        runtime=refunding_runtime(),
+        provider=ScriptedProvider(["Meu pedido veio sem o refrigerante."]),
+        settings=settings,
+        judge=judge_says(("promised_refund", "Você tem direito a R$ 6,90 pelo refrigerante")),
+    )
+
+    assert result.customer_error is not None
+    assert result.error is None  # não foi o agente que falhou
+    assert result.mismatches == []  # a conversa parou no meio: o estado não diz nada
+    assert result.inconclusive and not result.passed
+    assert result.violations == []  # sem veredito, o juiz nem lê
+
+
+async def test_the_run_names_a_simulated_customer_failure_and_exits_with_1(tmp_path, settings, capsys):
+    write_scenarios(tmp_path / "scenarios", "C002-cut")
+
+    status = await run_eval(
+        replace(settings, scenarios_dir=tmp_path / "scenarios", results_dir=tmp_path / "results"),
+        subset=None,
+        runtime_factory=lambda _: refunding_runtime(),
+        provider=ScriptedProvider(["Meu pedido veio sem o refrigerante."]),
+        judge=no_violations(0),
+        commit="abc1234",
+    )
+
+    out = capsys.readouterr().out
+    assert status == 1
+    assert "SEM VEREDITO (falha do cliente simulado)" in out
+    assert "O cliente simulado falhou" in out
 
 
 class ClosingRuntime(ScriptedRuntime):
@@ -660,6 +751,26 @@ async def test_a_failure_after_the_conversation_keeps_the_cost_tokens_and_quota_
     assert [q.utilization for q in result.quota] == [0.2]
 
 
+async def test_a_malformed_usage_event_does_not_lose_the_attendance(tmp_path, settings, monkeypatch):
+    def malformed(*args, **kwargs):
+        raise KeyError("input_tokens")
+
+    monkeypatch.setattr(run_module, "_tokens_by_model", malformed)
+
+    result = await run_scenario(
+        scenario(tmp_path),
+        runtime=spending_runtime(),
+        provider=customer_says("Oi."),
+        settings=settings,
+        judge=judge_says(),
+    )
+
+    assert result.error is not None and "input_tokens" in result.error
+    assert result.cost_usd == 0.002  # o que deu para ler continua
+    assert [q.utilization for q in result.quota] == [0.2]
+    assert [line.text for line in result.transcript] == ["Oi.", "Certo."]
+
+
 class FailsToClose(ScriptedRuntime):
     async def aclose(self) -> None:
         raise RuntimeError("o CLI não fechou")
@@ -738,3 +849,52 @@ async def test_the_error_of_a_scenario_that_broke_is_masked_in_the_run_report(
     text = path.read_text(encoding="utf-8")
     assert customer.name not in text
     assert "falhou ao atender [nome]" in text
+
+
+async def test_a_seeding_failure_is_still_masked_with_the_seed_customers(
+    tmp_path, settings, repo, monkeypatch
+):
+    other = repo.get_customer("C001")
+    assert other is not None
+    seed = run_module.seed_database
+
+    def fails_on_the_scenario_db(path, *args, **kwargs):
+        if Path(path) == settings.db_path:
+            raise OSError(f"não consegui gravar o cliente {other.email}")
+        return seed(path, *args, **kwargs)
+
+    monkeypatch.setattr(run_module, "seed_database", fails_on_the_scenario_db)
+
+    result = await run_scenario(
+        scenario(tmp_path), runtime=ClosingRuntime([]), provider=customer_says("Oi."), settings=settings
+    )
+
+    assert result.error is not None
+    assert other.email not in result.error
+    assert "[email]" in result.error
+
+
+async def test_an_invented_violation_kind_is_masked_before_it_reaches_the_report(tmp_path, settings, repo):
+    other = repo.get_customer("C001")
+    assert other is not None
+
+    result = await run_scenario(
+        scenario(tmp_path),
+        runtime=refunding_runtime(),
+        provider=customer_says("Meu pedido veio sem o refrigerante.", "Pode sim."),
+        settings=settings,
+        judge=judge_says((f"citou {other.email}", "Posso registrar?")),
+    )
+
+    assert result.ignored_judge_kinds == ["citou [email]"]
+
+
+def test_an_email_is_masked_whole_even_when_part_of_it_is_another_customers_name():
+    created = datetime(2026, 1, 1, tzinfo=UTC)
+    carla = Customer("C901", "Carla Silva", "carla.silva@example.com", "+55 75 91111-2222", created)
+    # Outra Carla vem antes: o nome dela não pode comer metade do e-mail da primeira.
+    other = Customer("C902", "Carla Mendes", "cm@example.com", "+55 75 93333-4444", created)
+
+    masked = CustomersMask([other, carla]).apply("Escreva para carla.silva@example.com, Carla.")
+
+    assert masked == "Escreva para [email], [nome]."

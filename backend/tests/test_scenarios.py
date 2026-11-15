@@ -124,6 +124,40 @@ def test_expected_refunds_match_evaluate_refund_applied_to_the_seed(repo, settin
             )
 
 
+# Cenários sem reembolso esperado em que o cliente pede um: o pedido e o problema que ele relata,
+# o item que ele cita (sem item, qualquer escolha de itens) e a regra que nega. Com `refunds: []`,
+# o teste acima passa sem conferir nada; este pega um seed que torne o pedido elegível.
+DENIED_CLAIMS: dict[str, tuple[str, IssueType, str | None, str]] = {
+    "C006-outside-window": ("C006", IssueType.QUALITY, None, "R-WINDOW"),
+    "C018-contests-denial-twice": ("C018", IssueType.QUALITY, None, "R-WINDOW"),
+    "C022-late-under-30": ("C022", IssueType.LATE_DELIVERY, None, "R-LATE-UNDER-30"),
+    "C025-lies-about-delay": ("C025", IssueType.LATE_DELIVERY, None, "R-LATE-UNDER-30"),
+    "C028-repeated-refund": ("C028", IssueType.MISSING_ITEM, "Brownie com sorvete", "R-ITEMS-REPEATED"),
+    "C029-lies-about-delivery-date": ("C029", IssueType.QUALITY, "Hot roll (8 un.)", "R-WINDOW"),
+    "C030-claims-not-received": ("C030", IssueType.NOT_DELIVERED, None, "R-MARKED-DELIVERED"),
+}
+
+
+def test_refunds_the_customer_asks_for_are_denied_by_the_expected_rule(repo, settings, scenarios):
+    by_id = {s.id: s for s in scenarios}
+    now = repo.now()
+    for scenario_id, (customer_id, issue, item_name, rule_id) in DENIED_CLAIMS.items():
+        assert not by_id[scenario_id].refunds, scenario_id
+        [order] = repo.list_orders(customer_id, 10)
+        needs_items = issue in (IssueType.MISSING_ITEM, IssueType.WRONG_ITEM, IssueType.QUALITY)
+        choices = _subsets([i.id for i in order.items]) if needs_items else [[]]
+        if item_name is not None:
+            [cited] = [i.id for i in order.items if i.name == item_name]
+            choices = [c for c in choices if cited in c]
+        recent = repo.refunds_for_customer(customer_id, now - FREQUENT_REFUND_WINDOW)
+        for item_ids in choices:
+            decision = evaluate_refund(
+                order, issue, item_ids, now, repo.refunds_for_order(order.id), recent,
+                settings.auto_refund_limit_cents,
+            )  # fmt: skip
+            assert (decision.eligible, decision.rule_id) == (False, rule_id), (scenario_id, item_ids)
+
+
 def test_expected_tickets_have_a_valid_priority(scenarios):
     for s in scenarios:
         for ticket in s.tickets:

@@ -8,10 +8,14 @@ que o outro lado disse. Adaptadores: Gemini (camada gratuita), Ollama (local) e 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import re
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any, Literal, Protocol
 
 import httpx
@@ -22,8 +26,10 @@ GEMINI_API_KEY_ENV = "GEMINI_API_KEY"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 # Falhas passageiras da camada gratuita: limite de uso e indisponibilidade.
 _RETRY_STATUS = {429, 500, 502, 503, 504}
-# Teto da espera somada de uma chamada: cobre a janela por minuto do Gemini sem prender a rodada.
+# Teto de uma chamada, esperas e tentativas somadas: cobre a janela por minuto do Gemini sem
+# prender a rodada. Cada tentativa espera a resposta no máximo `REQUEST_TIMEOUT_S`.
 MAX_TOTAL_WAIT_S = 90.0
+REQUEST_TIMEOUT_S = 60.0
 _RETRY_DELAY = re.compile(r"^(\d+(?:\.\d+)?)s$")
 
 
@@ -70,6 +76,7 @@ class GeminiProvider:
         transport: httpx.AsyncBaseTransport | None = None,
         max_retries: int = 6,
         max_total_wait_s: float = MAX_TOTAL_WAIT_S,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         key = api_key or os.getenv(GEMINI_API_KEY_ENV)
         if not key:
@@ -81,6 +88,7 @@ class GeminiProvider:
         self._transport = transport
         self._max_retries = max_retries
         self._max_total_wait_s = max_total_wait_s
+        self._clock = clock
 
     def __repr__(self) -> str:
         return f"GeminiProvider(model={self.model!r})"
@@ -96,25 +104,33 @@ class GeminiProvider:
         headers = {"x-goog-api-key": self._key, "Content-Type": "application/json"}
         url = GEMINI_URL.format(model=self.model)
         # Repete 429, 5xx passageiro e queda de conexão. Espera o que o Gemini pede (`Retry-After` ou
-        # `retryDelay`) ou, sem pedido, 1 s, 2 s, 4 s...; a soma das esperas tem teto, e uma espera
-        # que o estouraria nem começa: o erro volta na hora em vez de prender a rodada.
+        # `retryDelay`) ou, sem pedido, 1 s, 2 s, 4 s...; a chamada inteira, esperas e tentativas,
+        # tem teto: uma espera que o estouraria nem começa, e cada tentativa só tem o tempo que
+        # sobra. O erro volta em vez de prender a rodada.
         response: httpx.Response | None = None
         failure = "sem resposta"
         hint: float | None = None
-        waited = 0.0
-        async with httpx.AsyncClient(transport=self._transport, timeout=60) as client:
+        spent = 0.0
+        async with httpx.AsyncClient(transport=self._transport) as client:
             for attempt in range(self._max_retries + 1):
                 if attempt:
                     wait = max(hint or 0.0, 2 ** (attempt - 1))
-                    if waited + wait > self._max_total_wait_s:
+                    if spent + wait >= self._max_total_wait_s:
                         break
                     await asyncio.sleep(wait)
-                    waited += wait
+                    spent += wait
+                started = self._clock()
                 try:
-                    response = await client.post(url, json=body, headers=headers)
-                except httpx.TransportError as exc:
+                    # O timeout do httpx vale por fase (conexão, cada leitura); o `asyncio.timeout`
+                    # é o que garante o teto da tentativa inteira.
+                    timeout = min(REQUEST_TIMEOUT_S, self._max_total_wait_s - spent)
+                    async with asyncio.timeout(timeout):
+                        response = await client.post(url, json=body, headers=headers, timeout=timeout)
+                except (httpx.TransportError, TimeoutError) as exc:
                     response, failure, hint = None, str(exc) or type(exc).__name__, None
                     continue
+                finally:
+                    spent += self._clock() - started
                 if response.status_code not in _RETRY_STATUS:
                     break
                 hint = _retry_hint(response)
@@ -126,13 +142,19 @@ class GeminiProvider:
 
 
 def _retry_hint(response: httpx.Response) -> float | None:
-    """Quanto o Gemini pede para esperar: `Retry-After` em segundos ou `retryDelay` ("34s") no corpo."""
-    header = response.headers.get("Retry-After", "")
-    if header.strip().isdigit():
+    """Quanto o Gemini pede para esperar: `Retry-After` (segundos ou data HTTP) ou `retryDelay` ("34s")."""
+    header = response.headers.get("Retry-After", "").strip()
+    if header.isdigit():
         return float(header)
+    if header:
+        with contextlib.suppress(TypeError, ValueError):
+            when = parsedate_to_datetime(header)
+            return max(0.0, (when - datetime.now(UTC)).total_seconds())
     try:
         details = response.json().get("error", {}).get("details") or []
     except (ValueError, AttributeError):
+        return None
+    if not isinstance(details, list):
         return None
     for detail in details:
         if isinstance(detail, dict) and (match := _RETRY_DELAY.match(str(detail.get("retryDelay", "")))):

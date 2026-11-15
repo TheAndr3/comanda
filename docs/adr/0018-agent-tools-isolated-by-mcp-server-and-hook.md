@@ -22,3 +22,8 @@ Não dá para ligar o servidor MCP de Pedidos só ao subagente: o SDK registra s
 - **Hook que falha:** o `HookMatcher` tem `on_failure="block"`, e o hook devolve a negação mesmo que gravar o `guardrail_blocked` falhe (o erro vai para o log). Sem isso, um hook que levanta exceção deixaria o CLI seguir a permissão normal (`allowed_tools` com `dontAsk`).
 - **Cliente do SDK:** o runtime descarta a conexão em qualquer saída que não seja o fim normal de um turno: cancelamento (timeout da avaliação ou da API, Ctrl+C), exceção, erro de transporte e resultado com `is_error`. Reaproveitá-la responderia com um turno de atraso. O custo é que o turno seguinte começa uma conexão nova, sem o histórico da conversa; retomar com `resume` fica para depois.
 - **Resultado de delegação com erro** (limite de subagentes, validação do CLI) não vira `specialist_returned`: não houve relatório.
+
+## Acabamento (issue #18)
+
+- Descartar o cliente depois de um cancelamento roda o `disconnect` protegido (`anyio.CancelScope(shield=True)`): num cancel scope do anyio já cancelado, como o de uma requisição da API, cada `await` seria cancelado de novo, o `disconnect` não terminaria e o processo do CLI ficaria órfão.
+- Um `subagent_type` que não é texto (uma lista, por exemplo) é uma delegação negada como qualquer especialista desconhecido, e não um `TypeError` que derruba o turno.

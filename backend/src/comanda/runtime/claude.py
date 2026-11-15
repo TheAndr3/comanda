@@ -19,6 +19,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+import anyio
 from claude_agent_sdk import (
     AgentDefinition,
     AssistantMessage,
@@ -135,7 +136,8 @@ _DATED_ID = re.compile(r"-\d{8}")
 
 def _delegation_problem(args: dict[str, Any]) -> str | None:
     """Por que uma chamada a `Agent` não é uma delegação válida, ou `None` se é."""
-    if args.get("subagent_type") not in SPECIALISTS:
+    # Um `subagent_type` que não é texto (lista, dicionário) nem pode ser procurado em `SPECIALISTS`.
+    if not isinstance(args.get("subagent_type"), str) or args["subagent_type"] not in SPECIALISTS:
         return f"Não há especialista {args.get('subagent_type')!r}; use: {', '.join(SPECIALISTS)}."
     if extra := sorted(set(args) - _DELEGATION_PARAMS):
         allowed = "subagent_type, prompt, description"
@@ -171,6 +173,14 @@ def _split(total: int, weights: list[float]) -> list[int]:
     return shares
 
 
+def _completeness(usage: dict[str, Any]) -> tuple[int, int]:
+    """Para escolher a repetição mais completa de uma resposta: a saída, depois a entrada."""
+    input_total = sum(
+        usage.get(f) or 0 for f in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+    )
+    return usage.get("output_tokens") or 0, input_total
+
+
 def tool_name(agent: Agent, tool: str) -> str:
     """Nome que o modelo vê: `mcp__<servidor>__<ferramenta>`, um servidor por agente."""
     return f"mcp__{agent}__{tool}"
@@ -184,17 +194,21 @@ class ClaudeAgentRuntime:
         self._host: AgentHost | None = None
         # Delegações deste turno: id da chamada a `Agent` -> especialista.
         self._delegations: dict[str, Specialist] = {}
-        # Tokens deste turno por agente e modelo, e as mensagens já contadas.
+        # Tokens deste turno por agente e modelo das respostas sem id, e o `usage` de cada
+        # resposta com id (a maior das repetições), com o agente e o modelo dela.
         self._tokens: dict[tuple[Agent, str], _Tokens] = {}
-        self._counted: set[str] = set()
+        self._by_message: dict[str, tuple[tuple[Agent, str], dict[str, Any]]] = {}
         # `model_usage` do SDK é o acumulado da conexão: guardo o último para tirar a diferença.
         self._usage_seen: dict[str, dict[str, Any]] = {}
+        # O turno já registrou o consumo (houve `ResultMessage`).
+        self._usage_recorded = False
 
     # --- AgentRuntime ------------------------------------------------------------
 
     async def respond(self, message: str, host: AgentHost) -> None:
         self._host = host
-        self._delegations, self._tokens, self._counted = {}, {}, set()
+        self._delegations, self._tokens, self._by_message = {}, {}, {}
+        self._usage_recorded = False
         try:
             client = await self._connected()
             await client.query(message)
@@ -202,12 +216,14 @@ class ClaudeAgentRuntime:
                 self._handle(sdk_message, host)
         except (ClaudeSDKError, OSError) as exc:
             # Cliente morto (CLI caiu, JSON inválido): descarta para o próximo turno reconectar.
+            self._record_cut_turn_usage(host)
             await self._discard_client()
             raise AgentRuntimeError(f"Falha na conexão com o Claude Code: {exc}") from exc
         except BaseException:
             # Cancelamento (timeout, Ctrl+C) ou turno que o SDK encerrou com erro: o CLI pode
             # ter um turno pendente ou ter saído, e reaproveitar o cliente responderia com
             # um turno de atraso. O turno seguinte reconecta.
+            self._record_cut_turn_usage(host)
             await self._discard_client()
             raise
         finally:
@@ -219,9 +235,24 @@ class ClaudeAgentRuntime:
         if client is not None:
             await client.disconnect()
 
+    def _record_cut_turn_usage(self, host: AgentHost) -> None:
+        """Registra o que as respostas mostraram de um turno que acabou sem `ResultMessage`.
+
+        Sem o resultado não há o custo do SDK, então vale o da tabela (ADR-0019); o consumo
+        foi real e conta no custo do atendimento. Falhar aqui não troca o erro do turno.
+        """
+        if self._usage_recorded:
+            return
+        try:
+            self._record_usage({}, host)
+        except Exception:
+            logger.exception("Não consegui registrar o consumo do turno interrompido")
+
     async def _discard_client(self) -> None:
-        # O cliente já falhou: só precisa deixar de ser reaproveitado.
-        with contextlib.suppress(Exception):
+        # O cliente já falhou: só precisa deixar de ser reaproveitado. A proteção deixa o
+        # disconnect terminar dentro de um cancel scope do anyio já cancelado, que cancelaria
+        # de novo cada `await` e deixaria o processo do CLI órfão.
+        with anyio.CancelScope(shield=True), contextlib.suppress(Exception):
             await self.aclose()
 
     # --- mensagens do SDK -> AgentHost -------------------------------------------
@@ -262,7 +293,7 @@ class ClaudeAgentRuntime:
                 )
             )
         elif isinstance(message, ResultMessage):
-            self._record_usage(message, host)
+            self._record_usage(message.model_usage or {}, host)
             if message.is_error:
                 raise AgentRuntimeError(
                     message.result or f"O SDK encerrou o turno com erro ({message.subtype})."
@@ -271,23 +302,35 @@ class ClaudeAgentRuntime:
     def _count(self, message: AssistantMessage) -> None:
         """Soma os tokens de uma resposta do modelo ao agente que a produziu.
 
-        O SDK pode repetir a mesma resposta em várias mensagens, uma por bloco, todas com o
-        mesmo `usage`; por isso cada `message_id` conta uma vez só.
+        O SDK pode repetir a mesma resposta em várias mensagens, uma por bloco, com o mesmo
+        `message_id`; cada id conta uma vez só, com o maior `usage` das repetições, porque o
+        primeiro bloco pode trazer o `output_tokens` parcial.
         """
         if not message.usage:
             return
-        if message.message_id is not None:
-            if message.message_id in self._counted:
-                return
-            self._counted.add(message.message_id)
         parent = message.parent_tool_use_id
         agent: Agent = "reception" if parent is None else self._delegations.get(parent, "reception")
-        self._tokens.setdefault((agent, message.model), _Tokens()).add(message.usage)
+        key = (agent, message.model)
+        if message.message_id is None:
+            self._tokens.setdefault(key, _Tokens()).add(message.usage)
+            return
+        seen = self._by_message.get(message.message_id)
+        if seen is None or _completeness(message.usage) >= _completeness(seen[1]):
+            self._by_message[message.message_id] = (key, message.usage)
 
-    def _turn_usage(self, result: ResultMessage) -> dict[str, _Reported]:
+    def _turn_tokens(self) -> dict[tuple[Agent, str], _Tokens]:
+        """Os tokens do turno por agente e modelo: as respostas sem id e uma vez cada id."""
+        tokens: dict[tuple[Agent, str], _Tokens] = {}
+        for key, counted in self._tokens.items():
+            tokens.setdefault(key, _Tokens()).merge(counted)
+        for key, usage in self._by_message.values():
+            tokens.setdefault(key, _Tokens()).add(usage)
+        return tokens
+
+    def _turn_usage(self, model_usage: dict[str, Any]) -> dict[str, _Reported]:
         """Por modelo, o que o SDK contou neste turno: o acumulado menos o do turno anterior."""
         turn: dict[str, _Reported] = {}
-        for key, current in (result.model_usage or {}).items():
+        for key, current in model_usage.items():
             previous = self._usage_seen.get(key) or {}
             now = {f: current.get(f) or 0 for f in _USAGE_FIELDS}
             before = {f: previous.get(f) or 0 for f in _USAGE_FIELDS}
@@ -318,18 +361,19 @@ class ClaudeAgentRuntime:
                 return key
         return message_model
 
-    def _record_usage(self, result: ResultMessage, host: AgentHost) -> None:
+    def _record_usage(self, model_usage: dict[str, Any], host: AgentHost) -> None:
         """Registra os tokens do turno por agente e modelo, com o custo equivalente em API.
 
-        O total de cada modelo é o que o SDK contou no turno. As mensagens dizem quem usou:
-        o que elas somam fica com cada agente, e o que faltou (a resposta final de texto de
-        um especialista, os `output_tokens` finais) é repartido entre os agentes do modelo
-        na proporção do que já tinham. Se o SDK informa o custo, ele é o custo usado,
-        dividido na proporção do cálculo pela tabela (ADR-0014, ADR-0019).
+        O total de cada modelo é o que o SDK contou no turno (`model_usage` do `ResultMessage`).
+        As mensagens dizem quem usou: o que elas somam fica com cada agente, e o que faltou (a
+        resposta final de texto de um especialista, os `output_tokens` finais) é repartido entre
+        os agentes do modelo na proporção do que já tinham. Se o SDK informa o custo, ele é o
+        custo usado, dividido na proporção do cálculo pela tabela (ADR-0014, ADR-0019).
         """
-        reported = self._turn_usage(result)
+        self._usage_recorded = True
+        reported = self._turn_usage(model_usage)
         by_key: dict[str, dict[Agent, _Tokens]] = {}
-        for (agent, message_model), tokens in self._tokens.items():
+        for (agent, message_model), tokens in self._turn_tokens().items():
             key = self._usage_key(message_model, reported)
             by_key.setdefault(key, {}).setdefault(agent, _Tokens()).merge(tokens)
         for key, rep in reported.items():

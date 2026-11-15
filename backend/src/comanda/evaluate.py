@@ -39,6 +39,10 @@ DEFAULT_SUBSET = ("C002-missing-soda", "C003-lost-order", "C006-outside-window")
 
 RuntimeFactory = Callable[[Scenario], AgentRuntime]
 
+# Fora do `-dirty`: os relatórios de rodadas ainda não commitados e o diretório do Claude Code
+# (worktrees de agentes, configuração local), que não mudam o código da rodada.
+NOT_RUN_CODE = ("evals/results", ".claude")
+
 
 def select_scenarios(scenarios: list[Scenario], subset: Sequence[str] | None) -> list[Scenario]:
     """Os cenários pedidos, por id ou por cliente; `subset` vazio é o `DEFAULT_SUBSET`."""
@@ -52,18 +56,20 @@ def select_scenarios(scenarios: list[Scenario], subset: Sequence[str] | None) ->
 
 
 def current_commit(root: Path = REPO_ROOT) -> str:
-    """O commit do repositório, com `-dirty` se há mudança em arquivo rastreado; `unknown` sem git.
+    """O commit do repositório, com `-dirty` se há mudança fora de commit; `unknown` sem git.
 
-    Arquivo não rastreado não conta: o relatório de uma rodada ainda não commitado deixaria
-    todos os relatórios seguintes marcados como `-dirty` sem motivo.
+    Conta também arquivo novo ainda não adicionado, que muda o código da rodada. Ficam de fora
+    os caminhos de `NOT_RUN_CODE`: o relatório de uma rodada ainda não commitado deixaria todos
+    os seguintes marcados como `-dirty` sem motivo. Arquivos ignorados pelo git não contam.
     """
     git = ["git", "-C", str(root)]
+    excluded = [f":(exclude){path}" for path in NOT_RUN_CODE]
     try:
         sha = subprocess.run(
             [*git, "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True
         )
         status = subprocess.run(
-            [*git, "status", "--porcelain", "--untracked-files=no"],
+            [*git, "status", "--porcelain", "--", ".", *excluded],
             capture_output=True,
             text=True,
             check=True,
@@ -85,8 +91,11 @@ def _models(settings: Settings) -> dict[str, str]:
 def _print_result(result: ScenarioResult) -> None:
     verdict = "PASSOU" if result.passed else "REPROVOU"
     if result.inconclusive:
-        verdict = "SEM VEREDITO (falha do juiz)"
+        who = "do cliente simulado" if result.customer_error else "do juiz"
+        verdict = f"SEM VEREDITO (falha {who})"
     print(f"  {verdict} em {result.customer_turns} turnos, {result.duration_s:.1f} s")
+    if result.customer_error:
+        print(f"    - O cliente simulado falhou: {result.customer_error}")
     if result.judge_error:
         print(f"    - O juiz falhou: {result.judge_error}")
     for mismatch in result.mismatches:
@@ -95,7 +104,7 @@ def _print_result(result: ScenarioResult) -> None:
         print(f"    - Violação {v.severity}, {v.kind}: {v.detail}")
     if result.error:
         print(f"    - A conversa foi interrompida: {result.error}")
-    elif not result.ended_by_customer:
+    elif not result.ended_by_customer and not result.customer_error:
         print("    - O cliente simulado não encerrou a conversa antes do limite de turnos.")
     print(f"    Rastro: {result.trace_path}")
 
@@ -108,6 +117,12 @@ def _print_summary(metrics: Metrics, quota: dict[str, QuotaUse]) -> None:
             f"Falha do juiz em {metrics.judge_errors} atendimento(s); sem veredito: {left_out}. "
             "Sem veredito não contam nas violações; um cenário sem nenhum atendimento julgado fica "
             "fora das taxas, e no pass^3 só sai da conta se nenhum atendimento julgado reprovou. "
+            "A rodada sai com código 1."
+        )
+    if metrics.customer_errors:
+        print(
+            f"O cliente simulado falhou em {metrics.customer_errors} atendimento(s): ficam sem "
+            "veredito, como na falha do juiz, e fora das médias de custo e latência. "
             "A rodada sai com código 1."
         )
     if metrics.errored_attendances:

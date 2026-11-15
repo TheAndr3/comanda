@@ -38,14 +38,22 @@ class ToolContext:
     state: dict[str, Any] = field(default_factory=dict)
 
     @property
-    def checked_eligibility(self) -> set[tuple[str, str]]:
-        """Pares (pedido, tipo de problema) já consultados, montados por `eligibility_key`."""
+    def checked_eligibility(self) -> set[EligibilityKey]:
+        """Consultas (pedido, tipo de problema, itens) já feitas, montadas por `eligibility_key`."""
         return self.state.setdefault("checked_eligibility", set())
 
 
-def eligibility_key(order_id: object, issue: object) -> tuple[str, str]:
-    """A chave da consulta de elegibilidade, igual para quem grava e para o guardrail."""
-    return str(order_id or "").strip(), str(issue or "")
+EligibilityKey = tuple[str, str, frozenset[str]]
+
+
+def eligibility_key(order_id: object, issue: object, item_ids: object = None) -> EligibilityKey:
+    """A chave da consulta de elegibilidade, igual para quem grava e para o guardrail.
+
+    Os itens entram como conjunto: a ordem não importa, mas consultar o item A e registrar A e B
+    não passa.
+    """
+    items = item_ids if isinstance(item_ids, list | tuple) else []
+    return str(order_id or "").strip(), str(issue or ""), frozenset(str(i).strip() for i in items)
 
 
 @dataclass(frozen=True)
@@ -185,7 +193,7 @@ def check_refund_eligibility(ctx: ToolContext, args: dict[str, Any]) -> dict[str
     issue = _issue(args["issue"])
     item_ids = list(args.get("item_ids") or [])
     decision = _decide(ctx, order, issue, item_ids)
-    ctx.checked_eligibility.add(eligibility_key(order.id, issue.value))
+    ctx.checked_eligibility.add(eligibility_key(order.id, issue.value, item_ids))
     return {"order_id": order.id, "issue": issue.value, **decision.to_dict()}
 
 
@@ -357,19 +365,21 @@ ELIGIBILITY_GUARDRAIL = "eligibility_check"
 
 
 def eligibility_guardrail(ctx: ToolContext, name: str, args: dict[str, Any]) -> str | None:
-    """Motivo para negar `issue_refund` sem `check_refund_eligibility` antes (ADR-0008).
+    """Motivo para negar `issue_refund` sem `check_refund_eligibility` antes (ADR-0008, ADR-0020).
 
-    A consulta precisa ter sido feita no mesmo atendimento, para o mesmo pedido e tipo de
-    problema. O valor não depende disto, porque `issue_refund` recalcula a regra; o guardrail
-    protege o processo e deixa no Rastro o agente que pula a consulta.
+    A consulta precisa ter sido feita no mesmo atendimento, para o mesmo pedido, tipo de
+    problema e itens. O valor não depende disto, porque `issue_refund` recalcula a regra; o
+    guardrail protege o processo e deixa no Rastro o agente que pula a consulta.
     """
     if name != "issue_refund":
         return None
-    order_id, issue = key = eligibility_key(args.get("order_id"), args.get("issue"))
+    key = eligibility_key(args.get("order_id"), args.get("issue"), args.get("item_ids"))
     if key in ctx.checked_eligibility:
         return None
+    order_id, issue, items = key
+    which = f", os itens {', '.join(sorted(items))}" if items else ""
     return (
-        f"Use check_refund_eligibility para o pedido {order_id or '?'} e o problema {issue or '?'} "
+        f"Use check_refund_eligibility para o pedido {order_id or '?'}, o problema {issue or '?'}{which} "
         "antes de registrar o reembolso."
     )
 

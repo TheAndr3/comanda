@@ -118,7 +118,7 @@ def evaluate_refund(
         elif order.status == OrderStatus.DELIVERED:
             return _deny(
                 "R-MARKED-DELIVERED",
-                "O pedido consta como entregue; o caso precisa de análise humana.",
+                "O pedido consta como entregue; o caso deve ser encaminhado a um atendente humano.",
             )
         else:
             return _deny(

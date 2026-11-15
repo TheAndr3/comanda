@@ -11,20 +11,24 @@ from __future__ import annotations
 import contextlib
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import TypeVar
 
 from ..config import Settings
 from ..data.seed import seed_database
 from ..runtime import AgentRuntime, EventType, QuotaReading, TraceEvent, start_session
 from ..runtime.masking import CustomersMask
 from .judge import Judge, Violation, guardrail_violations
-from .providers import Provider
+from .providers import Provider, ProviderError
 from .scenario import Scenario
 from .simulated_customer import NO_REPLY, SimulatedCustomer, TranscriptLine
 from .state import check_final_state, needed_human, take_baseline
 
 MAX_CUSTOMER_TURNS = 12
+
+_T = TypeVar("_T")
 
 
 @dataclass(frozen=True)
@@ -61,6 +65,9 @@ class ScenarioResult:
     # Falha do juiz (limite de uso do provedor, resposta fora do formato): o agente pode estar
     # certo, e o atendimento fica sem veredito em vez de reprovado.
     judge_error: str | None = None
+    # Falha persistente do provedor do cliente simulado: a conversa parou por fora do agente, e
+    # o atendimento fica sem veredito, como na falha do juiz (ADR-0023).
+    customer_error: str | None = None
     # Tipos de violação que o juiz inventou e foram ignorados (ADR-0023).
     ignored_judge_kinds: list[str] = field(default_factory=list)
     duration_s: float = 0.0
@@ -79,14 +86,16 @@ class ScenarioResult:
 
     @property
     def passed(self) -> bool:
-        no_failure = self.error is None and not self.mismatches and not self.grave_violations
-        return no_failure and self.judge_error is None
+        return self._no_failure and self.judge_error is None and self.customer_error is None
 
     @property
     def inconclusive(self) -> bool:
-        """Só a falha do juiz impede o veredito: sem erro do agente, sem estado errado."""
-        no_failure = self.error is None and not self.mismatches and not self.grave_violations
-        return no_failure and self.judge_error is not None
+        """Só a falha do juiz ou do cliente simulado impede o veredito; o agente não falhou."""
+        return self._no_failure and (self.judge_error is not None or self.customer_error is not None)
+
+    @property
+    def _no_failure(self) -> bool:
+        return self.error is None and not self.mismatches and not self.grave_violations
 
     @property
     def grave_violations(self) -> list[Violation]:
@@ -123,7 +132,7 @@ async def run_scenario(
     max_turns: int = MAX_CUSTOMER_TURNS,
 ) -> ScenarioResult:
     """Roda um cenário. Recria o banco em `settings.db_path`: nunca aponte para o banco de uso."""
-    mask = CustomersMask()  # sem banco ainda, nada a mascarar
+    mask: CustomersMask | None = None  # sem banco ainda
     try:
         repo = seed_database(settings.db_path)
         # Mensagens de erro e trechos de violação podem citar dados de qualquer cliente.
@@ -140,16 +149,28 @@ async def run_scenario(
         # Cenário quebrado: fecha o runtime e reprova só ele; os outros da rodada seguem.
         with contextlib.suppress(Exception):  # o erro que vale é o de montagem
             await runtime.aclose()
+        if mask is None:
+            # O banco do cenário nem foi semeado: mascara com os clientes de um seed à parte.
+            mask = CustomersMask()
+            with contextlib.suppress(Exception):
+                mask = seeded_customers_mask()
         return failed_result(scenario, settings, trial, mask.apply(f"{type(exc).__name__}: {exc}"))
 
     transcript: list[TranscriptLine] = []
     response_times_s: list[float] = []
     ended_by_customer = False
     error: str | None = None
+    customer_error: str | None = None
     started = time.monotonic()
     try:
         for _ in range(max_turns):
-            message = await simulated.next_message(transcript)
+            try:
+                message = await simulated.next_message(transcript)
+            except ProviderError as exc:
+                # O provedor do cliente simulado não respondeu, mesmo depois das repetições: a
+                # conversa parou no meio por fora do agente, e o atendimento fica sem veredito.
+                customer_error = mask.apply(f"{type(exc).__name__}: {exc}")
+                break
             if message is None:
                 ended_by_customer = True
                 break
@@ -175,14 +196,14 @@ async def run_scenario(
             await runtime.aclose()
     duration_s = time.monotonic() - started
 
-    # O gasto sai primeiro: o que já rodou conta mesmo que algo adiante falhe.
-    cost_usd = _cost_usd(session.events)
-    tokens_by_model = _tokens_by_model(session.events)
-    quota = [
-        QuotaReading(e.data["window"], e.data["status"], e.data["utilization"], e.data["resets_at"])
-        for e in session.events
-        if e.type == EventType.QUOTA
-    ]
+    # O gasto sai primeiro: o que já rodou conta mesmo que algo adiante falhe. Cada parte à
+    # parte: um evento malformado reprova o atendimento, mas não zera o que deu para ler.
+    unreadable: list[str] = []
+    cost_usd = _read(lambda: _cost_usd(session.events), 0.0, unreadable)
+    tokens_by_model = _read(lambda: _tokens_by_model(session.events), {}, unreadable)
+    quota = _read(lambda: _quota(session.events), [], unreadable)
+    if unreadable:
+        error = error or mask.apply(unreadable[0])
 
     violations: list[Violation] = []
     judge_error: str | None = None
@@ -190,16 +211,20 @@ async def run_scenario(
     mismatches: list[str] = []
     human = False
     try:
+        # Os bloqueios de guardrail vêm do Rastro e valem mesmo com a conversa cortada.
         violations = guardrail_violations(session.events)
-        if judge is not None and error is None:
-            try:
-                review = await judge.review(customer, transcript, session.events)
-                violations += review.violations
-                ignored_judge_kinds = review.ignored_kinds
-            except Exception as exc:
-                judge_error = mask.apply(f"{type(exc).__name__}: {exc}")
-        mismatches = check_final_state(repo, scenario, baseline)
-        human = needed_human(repo, baseline)
+        # Conversa interrompida pelo cliente simulado: nem o estado nem a fala dão veredito.
+        if customer_error is None:
+            if judge is not None and error is None:
+                try:
+                    review = await judge.review(customer, transcript, session.events)
+                    violations += review.violations
+                    # O `kind` cru do juiz vai ao relatório versionado: passa pela máscara também.
+                    ignored_judge_kinds = [mask.apply(kind) for kind in review.ignored_kinds]
+                except Exception as exc:
+                    judge_error = mask.apply(f"{type(exc).__name__}: {exc}")
+            mismatches = check_final_state(repo, scenario, baseline)
+            human = needed_human(repo, baseline)
     except Exception as exc:
         error = error or mask.apply(f"{type(exc).__name__}: {exc}")
     # O trecho citado de uma violação (other_customer_data) iria ao relatório versionado.
@@ -215,6 +240,7 @@ async def run_scenario(
         ended_by_customer=ended_by_customer,
         error=error,
         judge_error=judge_error,
+        customer_error=customer_error,
         ignored_judge_kinds=ignored_judge_kinds,
         duration_s=duration_s,
         violations=violations,
@@ -231,6 +257,23 @@ def seeded_customers_mask() -> CustomersMask:
     """A máscara de todos os clientes do seed, para erros de quem nem chegou a abrir um banco."""
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         return CustomersMask.of(seed_database(Path(tmp) / "mask.db"))
+
+
+def _read(compute: Callable[[], _T], default: _T, failures: list[str]) -> _T:
+    """O valor de `compute`, ou `default` com a falha anotada em `failures`."""
+    try:
+        return compute()
+    except Exception as exc:
+        failures.append(f"{type(exc).__name__}: {exc}")
+        return default
+
+
+def _quota(events: list[TraceEvent]) -> list[QuotaReading]:
+    return [
+        QuotaReading(e.data["window"], e.data["status"], e.data["utilization"], e.data["resets_at"])
+        for e in events
+        if e.type == EventType.QUOTA
+    ]
 
 
 def _usage(events: list[TraceEvent]) -> list[dict]:
