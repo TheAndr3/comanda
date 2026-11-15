@@ -13,7 +13,7 @@ Comida fria, derramada ou em mau estado gera reembolso de 50% do valor dos itens
 Atrasos são medidos em relação ao horário previsto (ETA) informado no pedido. Atraso de 30 a 59 minutos: reembolso da taxa de entrega. Atraso de 60 minutos ou mais: taxa de entrega mais 25% do subtotal. Atrasos menores que 30 minutos não geram reembolso.
 
 ## Pedido não entregue
-Pedido cancelado pelo restaurante: reembolso integral. Pedido em rota há mais de 90 minutos além do previsto: considerado extraviado, com reembolso integral. Se o pedido consta como entregue mas o cliente diz que não recebeu, o caso vai para análise humana.
+Pedido cancelado pelo restaurante: reembolso integral. Pedido em rota há mais de 90 minutos além do previsto: considerado extraviado, com reembolso integral. Se o pedido consta como entregue mas o cliente diz que não recebeu, não há reembolso automático: o caso deve ser encaminhado a um atendente humano.
 
 ## Aprovação humana
 Reembolsos acima de R$ 80,00 precisam de aprovação de um atendente humano. Clientes com três ou mais reembolsos nos últimos 30 dias também passam por aprovação humana. O cliente é informado do valor já definido pela regra e de que um atendente vai confirmar o reembolso.

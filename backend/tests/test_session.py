@@ -271,6 +271,32 @@ async def test_eligibility_check_must_match_the_order_and_issue(repo, settings):
     assert repo.refunds_for_order("O-10002") == []
 
 
+async def test_eligibility_check_must_match_the_items_too(repo, settings):
+    # C008 consulta um item faltando e tenta registrar esse item mais outro.
+    one = {"order_id": "O-10012", "issue": "missing_item", "item_ids": ["O-10012-1"]}
+    two = {"order_id": "O-10012", "issue": "missing_item", "item_ids": ["O-10012-1", "O-10012-2"]}
+    same_two = {"order_id": "O-10012", "issue": "missing_item", "item_ids": ["O-10012-2", "O-10012-1"]}
+    runtime = ScriptedRuntime(
+        [
+            [
+                ToolCall("refunds", "check_refund_eligibility", one),
+                ToolCall("refunds", "issue_refund", two),
+                # Consultados os dois itens, em outra ordem, o registro passa.
+                ToolCall("refunds", "check_refund_eligibility", two),
+                ToolCall("refunds", "issue_refund", same_two),
+            ]
+        ]
+    )
+    session = start_session(repo, settings, customer_id="C008", runtime=runtime)
+
+    turn = await session.send("Faltaram duas pizzas.")
+
+    blocked = [e.data["args"] for e in turn.events if e.type == "guardrail_blocked"]
+    assert blocked == [two]
+    [refund] = repo.refunds_for_order("O-10012")
+    assert sorted(refund.item_ids) == ["O-10012-1", "O-10012-2"]
+
+
 async def test_closed_session_accepts_no_more_messages(repo, settings):
     session = start_session(repo, settings, customer_id="C001", runtime=ScriptedRuntime([[Say("Oi!")]]))
     session.close()

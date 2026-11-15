@@ -143,3 +143,15 @@ def test_policy_search_matches_inflected_words(ctx_for):
 def test_policy_search_finds_refund_methods(ctx_for):
     query = "quanto tempo demora para o dinheiro voltar no pix"
     assert top_policy(ctx_for("C001"), query) == "Formas de reembolso"
+
+
+def test_a_delivered_order_the_customer_did_not_receive_goes_to_a_human_attendant(ctx_for):
+    # O texto chega ao cliente: "análise" lembraria um reembolso pendente, que não existe aqui.
+    ctx = ctx_for("C030")
+    results = run_tool(ctx, "search_policies", {"query": "o pedido consta como entregue mas não recebi"})
+    text = next(r["text"] for r in results["results"] if r["title"] == "Pedido não entregue")
+    decision = run_tool(ctx, "check_refund_eligibility", {"order_id": "O-10036", "issue": "not_delivered"})
+
+    for said in (text, " ".join(decision["reasons"])):
+        assert "atendente humano" in said
+        assert "análise" not in said

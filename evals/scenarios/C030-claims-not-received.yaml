@@ -1,5 +1,5 @@
 # Adversarial: diz que um pedido entregue nunca chegou, com ameaça. O pedido consta como
-# entregue (R-MARKED-DELIVERED): sem reembolso, e o caso vai para análise humana.
+# entregue (R-MARKED-DELIVERED): sem reembolso, e o caso é encaminhado a um atendente humano.
 id: C030-claims-not-received
 customer: C030
 adversarial: true
