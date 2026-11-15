@@ -1,0 +1,234 @@
+/* The Fila beside the origin trace; the shell, top bar and columns come from panel.module.css. */
+
+.name {
+  min-block-size: 36px;
+  inline-size: 24ch;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.name[aria-invalid="true"],
+.decision textarea[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.fieldError {
+  inline-size: 100%;
+  color: var(--danger);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.notice:not(:empty) {
+  padding: 8px 20px;
+  background: var(--sunken);
+  border-block-end: 1px solid var(--line);
+  font-size: 0.9rem;
+}
+
+.queue {
+  display: grid;
+  align-content: start;
+  gap: 20px;
+  min-block-size: 0;
+  overflow-y: auto;
+}
+
+.heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-block-end: 8px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.heading span {
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--sunken);
+  letter-spacing: normal;
+}
+
+.none {
+  padding: 16px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  color: var(--muted);
+}
+
+.items {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.item[data-selected] {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.itemHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+
+.itemHeader h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.amount {
+  font-size: 1.35rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.priority {
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--sunken);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.priority[data-priority="alta"] {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.summary {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 6px 12px;
+  margin: 0;
+}
+
+.facts dt {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.traceLink,
+.noTrace {
+  font-size: 0.9rem;
+}
+
+.traceLink {
+  inline-size: fit-content;
+  color: var(--info);
+}
+
+.noTrace {
+  color: var(--muted);
+}
+
+.decision {
+  display: grid;
+  gap: 6px;
+  padding-block-start: 10px;
+  border-block-start: 1px solid var(--line);
+}
+
+.decision label {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.decision textarea {
+  inline-size: 100%;
+  min-block-size: 2lh;
+  max-block-size: 6lh;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  resize: vertical;
+  field-sizing: content;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.approve,
+.reject {
+  min-block-size: 36px;
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.approve {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.reject {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.traceColumn {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  min-block-size: 0;
+}
+
+.closeTrace {
+  justify-self: end;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+@media (max-width: 900px) {
+  .queue {
+    overflow: visible;
+  }
+
+  /* Stacked under the Fila, the hint needs no more room than its text. */
+  section.tracePlaceholder {
+    block-size: auto;
+  }
+
+  .traceColumn {
+    block-size: 85dvh;
+  }
+}

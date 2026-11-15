@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 
 
 import { ApiError, apiUrl, closeSession, listCustomers, sendMessage, startSession, type CustomerOption } from "@/lib/api";
 
+import { Nav } from "./nav";
 import styles from "./panel.module.css";
 import { TracePanel } from "./trace-panel";
 
@@ -117,9 +118,7 @@ export function LivePanel() {
   return (
     <div className={styles.shell}>
       <header className={styles.topbar}>
-        <h1 className={styles.brand}>
-          Comanda <span>Painel</span>
-        </h1>
+        <Nav current="live" />
         <div className={styles.controls}>
           <label htmlFor="customer">Cliente</label>
           <select

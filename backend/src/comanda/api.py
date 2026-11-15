@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -33,11 +32,16 @@ from .domain.queue import (
     reject_refund,
     resolve_ticket,
 )
-from .runtime import AgentRuntime, AgentRuntimeError, ClaudeAgentRuntime, Session, start_session
+from .runtime import (
+    SESSION_ID,
+    AgentRuntime,
+    AgentRuntimeError,
+    ClaudeAgentRuntime,
+    Session,
+    start_session,
+)
 
 RuntimeFactory = Callable[[], AgentRuntime]
-# O formato do id que o Atendimento gera; o Rastro só é lido para ids assim (ADR-0027).
-SESSION_ID = re.compile(r"S-[0-9A-F]{12}")
 NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
@@ -171,7 +175,7 @@ def create_app(settings: Settings, runtime_factory: RuntimeFactory | None = None
     @app.get("/sessions/{session_id}/trace")
     async def trace(session_id: str) -> Response:
         # O Rastro gravado, vivo ou encerrado, como está no arquivo: o mascaramento é o da
-        # gravação (ADR-0008) e o painel lê as linhas com o mesmo módulo do SSE (ADR-0027).
+        # gravação (ADR-0008) e o painel lê as linhas com o mesmo módulo do SSE (ADR-0028).
         path = settings.runs_dir / f"{session_id}.jsonl"
         if not SESSION_ID.fullmatch(session_id) or not path.is_file():
             raise HTTPException(

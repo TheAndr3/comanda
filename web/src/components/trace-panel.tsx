@@ -41,6 +41,15 @@ export function TracePanel({ sessionId }: { sessionId: string }) {
     if (view.ended) source.current?.close();
   }, [view.ended]);
 
+  const status = view.ended ? "ended" : connection;
+  return <TraceSection view={view} status={status} label={CONNECTION_LABEL[status]} />;
+}
+
+/**
+ * One Atendimento's trace, however it was read: live over SSE or recorded (the Fila). `status`
+ * styles the indicator next to the title and `label` says it in words.
+ */
+export function TraceSection({ view, status, label }: { view: TraceView; status: string; label: string }) {
   const list = useRef<HTMLOListElement>(null);
   const followBottom = useRef(true);
   useEffect(() => {
@@ -48,15 +57,13 @@ export function TracePanel({ sessionId }: { sessionId: string }) {
     if (element && followBottom.current) element.scrollTop = element.scrollHeight;
   }, [view.steps]);
 
-  const status = view.ended ? "ended" : connection;
-
   return (
     <section className={styles.trace} aria-labelledby="trace-title">
       <header className={styles.traceHeader}>
         <div className={styles.traceTitleRow}>
           <h2 id="trace-title">Rastro</h2>
           <p className={styles.connection} data-status={status} role="status">
-            {CONNECTION_LABEL[status]}
+            {label}
           </p>
         </div>
         <TraceSummary view={view} />

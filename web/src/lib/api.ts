@@ -29,7 +29,17 @@ export class ApiError extends Error {
 }
 
 /** GET without a body; POST with `body` sent as JSON, or with no body when it is omitted. */
-async function request<T>(path: string, method: "GET" | "POST" = "GET", body?: unknown): Promise<T> {
+export async function request<T>(path: string, method: "GET" | "POST" = "GET", body?: unknown): Promise<T> {
+  const response = await call(path, method, body);
+  return (response.status === 204 ? undefined : await response.json()) as T;
+}
+
+/** Like `request`, for a response read as text rather than JSON. */
+export async function requestText(path: string): Promise<string> {
+  return (await call(path, "GET")).text();
+}
+
+async function call(path: string, method: "GET" | "POST", body?: unknown): Promise<Response> {
   const init: RequestInit = { method };
   if (body !== undefined) {
     init.headers = { "Content-Type": "application/json" };
@@ -49,7 +59,7 @@ async function request<T>(path: string, method: "GET" | "POST" = "GET", body?: u
         : `A API respondeu ${response.status}.`;
     throw new ApiError(response.status, detail);
   }
-  return (response.status === 204 ? undefined : await response.json()) as T;
+  return response;
 }
 
 export function listCustomers(): Promise<CustomerOption[]> {
