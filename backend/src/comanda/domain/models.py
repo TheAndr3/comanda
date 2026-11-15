@@ -121,6 +121,9 @@ class Refund:
     decided_by: str | None = None
     decided_at: datetime | None = None
     rejection_reason: str | None = None
+    # O atendimento que registrou o reembolso, para abrir o Rastro de origem na Fila; vazio
+    # quando o reembolso nasceu fora de um atendimento (seed, testes).
+    session_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -132,3 +135,5 @@ class Ticket:
     summary: str
     created_at: datetime
     status: TicketStatus = TicketStatus.OPEN
+    # O atendimento que abriu o ticket, como em `Refund.session_id`.
+    session_id: str | None = None

@@ -7,6 +7,7 @@ runtime, enviar falas do cliente, receber as falas do sistema e os eventos do Ra
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -21,6 +22,10 @@ from ..tools import ELIGIBILITY_GUARDRAIL, ToolContext, eligibility_guardrail, r
 from .base import AgentRuntime, QuotaReading, Usage
 from .masking import PersonalDataMask
 from .trace import Actor, EventType, TraceEvent, TraceWriter
+
+# O id de um atendimento, como `Session` o gera. Quem recebe um id de fora, como a API ao ler o
+# Rastro gravado, confere o formato antes de tocar o disco (ADR-0028).
+SESSION_ID = re.compile(r"S-[0-9A-F]{12}")
 
 
 class SessionClosed(Exception):
@@ -42,7 +47,7 @@ class Session:
             raise ValueError(f"Cliente {customer_id} não encontrado.")
         self.id = f"S-{uuid.uuid4().hex[:12].upper()}"
         self._mask = PersonalDataMask(customer)
-        self._ctx = ToolContext(repo=repo, settings=settings, customer_id=customer_id)
+        self._ctx = ToolContext(repo=repo, settings=settings, customer_id=customer_id, session_id=self.id)
         self._runtime = runtime
         self._turn: Turn | None = None
         # O turno mais recente, também quando o runtime falhou no meio dele.

@@ -34,6 +34,8 @@ class ToolContext:
     settings: Settings
     # Fixo: o cliente do atendimento não muda depois de criado o contexto (ADR-0009).
     customer_id: str
+    # O atendimento que usa as ferramentas; reembolsos e tickets o registram como origem.
+    session_id: str | None = None
     # Estado da sessão usado pelos guardrails, por exemplo checagens de elegibilidade feitas.
     state: dict[str, Any] = field(default_factory=dict)
 
@@ -215,6 +217,7 @@ def issue_refund(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
         rule_id=decision.rule_id,
         item_ids=tuple(sorted(set(item_ids))),
         created_at=ctx.repo.now(),
+        session_id=ctx.session_id,
     )
     ctx.repo.insert_refund(refund)
     message = (
@@ -245,6 +248,7 @@ def escalate_to_human(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
         priority=priority,
         summary=args["summary"].strip()[:1000],
         created_at=ctx.repo.now(),
+        session_id=ctx.session_id,
     )
     ctx.repo.insert_ticket(ticket)
     return {

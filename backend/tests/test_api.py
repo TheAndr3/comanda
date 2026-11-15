@@ -245,6 +245,63 @@ async def test_resolve_ticket_and_unknown_items_are_not_found(client, ctx_for):
     assert unknown_refund.status_code == 404
 
 
+LOST_ORDER_SCRIPT = [
+    [
+        Delegate("refunds", "Reembolsar o pedido O-10004, que não chegou."),
+        ToolCall("refunds", "check_refund_eligibility", {"order_id": "O-10004", "issue": "not_delivered"}),
+        ToolCall("refunds", "issue_refund", {"order_id": "O-10004", "issue": "not_delivered"}),
+        ToolCall("refunds", "escalate_to_human", {"summary": "Pedido perdido.", "order_id": "O-10004"}),
+        Return("refunds", "Reembolso pendente e ticket aberto."),
+        Say("Registrei o reembolso; um atendente humano vai confirmar."),
+    ],
+]
+
+
+async def test_queue_items_link_to_the_session_they_came_from(client, runtimes):
+    runtimes.append(ScriptedRuntime(LOST_ORDER_SCRIPT))
+    session_id = (await client.post("/sessions", json={"customer_id": "C003"})).json()["session_id"]
+    await client.post(f"/sessions/{session_id}/messages", json={"text": "Meu pedido não chegou."})
+
+    queue = (await client.get("/queue")).json()
+
+    [refund] = queue["pending_refunds"]
+    [ticket] = queue["open_tickets"]
+    assert refund["session_id"] == session_id
+    assert ticket["session_id"] == session_id
+
+
+async def test_items_created_outside_a_session_have_no_session(client, ctx_for):
+    pending_lost_order(ctx_for)
+    open_ticket(ctx_for)
+
+    queue = (await client.get("/queue")).json()
+
+    assert queue["pending_refunds"][0]["session_id"] is None
+    assert queue["open_tickets"][0]["session_id"] is None
+
+
+async def test_trace_of_a_finished_session_is_served_after_a_restart(client, runtimes, settings):
+    session_id = await finished_session(client, runtimes, customer_id="C002")
+    # Uma API nova não tem o atendimento na memória (ADR-0021): o Rastro vem do arquivo gravado.
+    restarted = create_app(settings, runtime_factory=lambda: runtimes.pop(0))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=restarted), base_url="http://api") as c:
+        response = await c.get(f"/sessions/{session_id}/trace")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/x-ndjson; charset=utf-8"
+    assert response.content == (settings.runs_dir / f"{session_id}.jsonl").read_bytes()
+
+
+async def test_trace_of_an_unknown_or_malformed_session_is_not_found(client, settings):
+    settings.runs_dir.mkdir(parents=True, exist_ok=True)
+    (settings.runs_dir.parent / "secret.jsonl").write_text("{}", "utf-8")
+
+    assert (await client.get("/sessions/S-000000000000/trace")).status_code == 404
+    # Só ids no formato do Atendimento: nada fora do diretório de rastros é lido.
+    assert (await client.get("/sessions/..%2Fsecret/trace")).status_code == 404
+    assert (await client.get("/sessions/secret/trace")).status_code == 404
+
+
 class HeldTurn:
     """Runtime cujo turno só termina quando o teste libera; simula um modelo lento."""
 
