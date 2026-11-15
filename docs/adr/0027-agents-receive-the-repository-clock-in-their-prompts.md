@@ -1,0 +1,5 @@
+# Os agentes recebem no prompt de sistema o "agora" do repositório
+
+O banco e as regras de reembolso leem o "agora" fixo da tabela `meta` (`Repository.now()`, 5/11/2026 19:30 BRT no seed; ADR-0006), mas o CLI do Claude Code injeta no cabeçalho `<env>` a data real da máquina. Sem o relógio do sistema no prompt, na primeira rodada completa (PR #27) a Recepção tratou pedidos de 05/11 como antigos e contou prazos até a data real, levando a negativas e confirmações indevidas.
+
+O Atendimento passa a expor `AgentHost.now()`, que lê `repo.now()` sem entregar o repositório ao runtime (ADR-0017). Ao abrir a sessão do SDK, `ClaudeAgentRuntime` monta o prompt da Recepção e o de cada especialista com `system_prompt(spec, host.now())`, que acrescenta o instante em horário de Brasília (`BRT`, `-03:00`), o dia da semana, as datas de "hoje" e "ontem" e a instrução de ignorar qualquer outra data do ambiente. Nenhuma data é escrita à mão nos prompts: um banco com outro `now` muda o prompt de todos os agentes.

@@ -9,11 +9,12 @@ adversariais. Os demais (C031 em diante) são gerados com semente fixa. O "agora
 from __future__ import annotations
 
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from ..domain.db import Repository
 from ..domain.models import (
+    BRT,
     Customer,
     IssueType,
     MenuItem,
@@ -25,7 +26,6 @@ from ..domain.models import (
     Restaurant,
 )
 
-BRT = timezone(timedelta(hours=-3))
 NOW = datetime(2026, 11, 5, 19, 30, tzinfo=BRT)
 CENTER = (-12.2664, -38.9663)  # Feira de Santana, BA
 
