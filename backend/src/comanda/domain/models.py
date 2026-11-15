@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from enum import StrEnum
+
+# Fuso do atendimento: horário de Brasília, sem horário de verão desde 2019.
+BRT = timezone(timedelta(hours=-3))
 
 
 class OrderStatus(StrEnum):

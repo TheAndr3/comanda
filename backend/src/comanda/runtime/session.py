@@ -108,6 +108,9 @@ class Session:
 
     # --- AgentHost -------------------------------------------------------------
 
+    def now(self) -> datetime:
+        return self._ctx.repo.now()
+
     def say(self, text: str) -> None:
         assert self._turn is not None
         self._turn.replies.append(text)

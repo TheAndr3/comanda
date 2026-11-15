@@ -5,6 +5,7 @@ ferramentas pelo servidor MCP em processo, como o CLI faria.
 """
 
 import asyncio
+from datetime import UTC, datetime
 
 import anyio
 import pytest
@@ -761,3 +762,43 @@ async def test_subscription_quota_readings_go_to_the_trace(repo, settings):
         )
     ]
     assert turn.replies == ["Oi!"]
+
+
+def _system_prompts(fake: FakeClaude) -> dict[str, str]:
+    """O prompt de sistema de cada agente, como o runtime o entregou ao SDK."""
+    assert fake.options is not None and isinstance(fake.options.system_prompt, str)
+    return {
+        "reception": fake.options.system_prompt,
+        **{name: agent.prompt for name, agent in (fake.options.agents or {}).items()},
+    }
+
+
+async def test_every_agent_prompt_carries_the_repository_now_in_brasilia_time(repo, settings):
+    fake = FakeClaude([[Says("Olá!"), Ends()]])
+    session = start_session(
+        repo, settings, customer_id="C001", runtime=ClaudeAgentRuntime(settings, client_factory=fake)
+    )
+
+    await session.send("Oi")
+
+    prompts = _system_prompts(fake)
+    assert set(prompts) == {"reception", "orders", "refunds"}
+    for prompt in prompts.values():
+        # O seed fixa o "agora" em 5/11/2026 19:30 BRT (ADR-0006), uma quinta-feira.
+        assert "quinta-feira, 05/11/2026, 19:30" in prompt
+
+
+async def test_another_repository_now_changes_every_agent_prompt(repo, settings):
+    # 01:15 de sábado em UTC ainda é sexta-feira, 22:15, em Brasília.
+    repo.set_now(datetime(2026, 11, 7, 1, 15, tzinfo=UTC))
+    fake = FakeClaude([[Says("Olá!"), Ends()]])
+    session = start_session(
+        repo, settings, customer_id="C001", runtime=ClaudeAgentRuntime(settings, client_factory=fake)
+    )
+
+    await session.send("Oi")
+
+    for prompt in _system_prompts(fake).values():
+        assert "sexta-feira, 06/11/2026, 22:15" in prompt
+        assert '"hoje" é 06/11/2026, "ontem" é 05/11/2026' in prompt
+        assert "05/11/2026, 19:30" not in prompt

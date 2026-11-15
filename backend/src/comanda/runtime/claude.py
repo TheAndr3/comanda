@@ -17,6 +17,7 @@ import logging
 import re
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol
 
 import anyio
@@ -41,7 +42,7 @@ from claude_agent_sdk import (
     create_sdk_mcp_server,
 )
 
-from ..agents import RECEPTION, SPECIALISTS, AgentSpec
+from ..agents import RECEPTION, SPECIALISTS, AgentSpec, system_prompt
 from ..agents.roles import Agent, Specialist
 from ..config import Settings
 from ..tools import TOOLS
@@ -210,7 +211,7 @@ class ClaudeAgentRuntime:
         self._delegations, self._tokens, self._by_message = {}, {}, {}
         self._usage_recorded = False
         try:
-            client = await self._connected()
+            client = await self._connected(host)
             await client.query(message)
             async for sdk_message in client.receive_response():
                 self._handle(sdk_message, host)
@@ -426,18 +427,19 @@ class ClaudeAgentRuntime:
 
     # --- sessão do SDK -----------------------------------------------------------
 
-    async def _connected(self) -> SdkClient:
+    async def _connected(self, host: AgentHost) -> SdkClient:
         if self._client is None:
-            client = self._client_factory(self._options())
+            # O "agora" entra no prompt de sistema, que vale para a conexão inteira (ADR-0027).
+            client = self._client_factory(self._options(host.now()))
             await client.connect()
             self._client = client
             self._usage_seen = {}  # conexão nova: os contadores do SDK recomeçam do zero
         return self._client
 
-    def _options(self) -> ClaudeAgentOptions:
+    def _options(self, now: datetime) -> ClaudeAgentOptions:
         specs = [RECEPTION, *SPECIALISTS.values()]
         return ClaudeAgentOptions(
-            system_prompt=RECEPTION.prompt,
+            system_prompt=system_prompt(RECEPTION, now),
             # O CLI expande `@caminho` e executa `/comando` no texto do cliente, sem passar pelo
             # hook; com isto a fala chega ao modelo como foi escrita (ADR-0008, ADR-0009).
             verbatim_prompts=True,
@@ -453,7 +455,7 @@ class ClaudeAgentRuntime:
             agents={
                 name: AgentDefinition(
                     description=spec.description,
-                    prompt=spec.prompt,
+                    prompt=system_prompt(spec, now),
                     tools=[tool_name(name, t) for t in spec.tools],
                     model=self._settings.specialist_model,
                 )

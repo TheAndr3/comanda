@@ -8,6 +8,7 @@ Atendimento implementa. É isso que mantém o cliente fixo e o Rastro completo.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol
 
 from ..agents.roles import Agent, Specialist
@@ -51,6 +52,13 @@ class QuotaReading:
 
 class AgentHost(Protocol):
     """O que o Atendimento oferece ao runtime durante um turno."""
+
+    def now(self) -> datetime:
+        """O "agora" do atendimento: o relógio do repositório, o mesmo das regras (ADR-0006).
+
+        O runtime o passa aos prompts dos agentes (ADR-0027), sem ver o repositório.
+        """
+        ...
 
     def say(self, text: str) -> None:
         """Fala da Recepção ao cliente. Especialistas não falam com o cliente."""

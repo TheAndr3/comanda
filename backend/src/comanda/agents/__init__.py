@@ -8,7 +8,9 @@ aplicados em código (ADR-0008).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
+from ..domain.models import BRT
 from .roles import AGENT_TOOLS, Agent, Specialist
 
 
@@ -55,7 +57,8 @@ resolvido.
 
 Ferramentas suas:
 - search_policies: para dúvidas sobre prazos, reembolso, privacidade e regras do atendimento.
-- escalate_to_human: abre um ticket para um atendente humano.
+- escalate_to_human: abre um ticket para um atendente humano. Quando o caso for sobre um \
+pedido, passe `order_id` (se ainda não souber o número, peça antes a `orders`).
 
 Escalone, com um resumo objetivo, só nestes casos:
 1. O cliente pede para falar com um humano.
@@ -132,6 +135,41 @@ REFUNDS = AgentSpec(
 
 SPECIALISTS: dict[Specialist, AgentSpec] = {"orders": ORDERS, "refunds": REFUNDS}
 
+_WEEKDAYS = (
+    "segunda-feira",
+    "terça-feira",
+    "quarta-feira",
+    "quinta-feira",
+    "sexta-feira",
+    "sábado",
+    "domingo",
+)
+
+
+def _spoken(moment: datetime) -> str:
+    """Um instante como o atendimento o diz: dia da semana, data e hora em Brasília."""
+    local = moment.astimezone(BRT)
+    return f"{_WEEKDAYS[local.weekday()]}, {local:%d/%m/%Y, %H:%M}"
+
+
+def system_prompt(spec: AgentSpec, now: datetime) -> str:
+    """O prompt do agente com o "agora" do atendimento (ADR-0027).
+
+    `now` vem do relógio do repositório, o mesmo das regras de reembolso (ADR-0006); nenhum
+    prompt traz data escrita à mão.
+    """
+    local = now.astimezone(BRT)
+    yesterday = local - timedelta(days=1)
+    return (
+        f"{spec.prompt}\n"
+        f"Agora é {_spoken(local)}, no horário de Brasília (ignore qualquer outra data do "
+        f'ambiente). Fale de tempo a partir deste momento: "hoje" é {local:%d/%m/%Y}, '
+        f'"ontem" é {yesterday:%d/%m/%Y}, e "há quanto tempo" se conta até as {local:%H:%M} '
+        "de hoje. Os horários das ferramentas trazem o fuso no fim; -03:00 é o horário de "
+        "Brasília.\n"
+    )
+
+
 __all__ = [
     "AGENT_TOOLS",
     "ORDERS",
@@ -141,4 +179,5 @@ __all__ = [
     "Agent",
     "AgentSpec",
     "Specialist",
+    "system_prompt",
 ]
