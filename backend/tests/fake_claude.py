@@ -53,6 +53,8 @@ class Says:
     model: str = HAIKU
     parent: str | None = None
     usage: dict[str, Any] | None = None
+    # O SDK repete a mesma resposta em várias mensagens, uma por bloco, com o mesmo id.
+    message_id: str | None = None
 
 
 @dataclass
@@ -182,8 +184,8 @@ class FakeClaude:
 
     async def _play(self, step: Step) -> list[Message]:
         match step:
-            case Says(text, model, parent, usage):
-                return [self._assistant([TextBlock(text)], model, parent, usage)]
+            case Says(text, model, parent, usage, message_id):
+                return [self._assistant([TextBlock(text)], model, parent, usage, message_id)]
             case Delegates(tool_use_id, subagent_type, prompt, tool_name, in_background, extra):
                 args: dict[str, Any] = {
                     "subagent_type": subagent_type,
@@ -240,13 +242,15 @@ class FakeClaude:
                 ]
         raise AssertionError(f"Passo desconhecido: {step}")
 
-    def _assistant(self, content, model: str, parent: str | None, usage=None) -> AssistantMessage:
+    def _assistant(
+        self, content, model: str, parent: str | None, usage=None, message_id: str | None = None
+    ) -> AssistantMessage:
         return AssistantMessage(
             content=content,
             model=model,
             parent_tool_use_id=parent,
             usage=usage,
-            message_id=f"msg_{next(_ids)}",
+            message_id=message_id or f"msg_{next(_ids)}",
         )
 
     def _tool_result(self, tool_use_id: str, content, is_error: bool = False, parent: str | None = None):

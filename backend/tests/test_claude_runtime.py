@@ -6,6 +6,7 @@ ferramentas pelo servidor MCP em processo, como o CLI faria.
 
 import asyncio
 
+import anyio
 import pytest
 from claude_agent_sdk import CLIConnectionError
 
@@ -412,6 +413,39 @@ async def test_unknown_subagent_type_gets_no_permission_and_is_not_billed_to_the
     assert not [e for e in turn.events if e.type == "tool_call"]
 
 
+async def test_a_response_repeated_block_by_block_counts_its_final_usage(repo, settings):
+    # O 1º bloco chega com o `output_tokens` parcial; o último, com o da resposta inteira.
+    fake = FakeClaude(
+        [
+            [
+                Says("Vou verificar", usage=usage(100, 1), message_id="msg_same"),
+                Says("o seu pedido.", usage=usage(100, 40), message_id="msg_same"),
+                Ends(),
+            ]
+        ]
+    )
+    session = make_session(repo, settings, fake)
+
+    turn = await session.send("Oi")
+
+    [used] = [e.data for e in turn.events if e.type == "usage"]
+    assert (used["input_tokens"], used["output_tokens"]) == (100, 40)
+
+
+async def test_a_subagent_type_that_is_not_a_name_is_denied_like_any_unknown_one(repo, settings):
+    fake = FakeClaude(
+        [[Delegates("toolu_d1", ["orders"], "Listar."), Says("Não consegui consultar agora."), Ends()]]  # type: ignore[arg-type]
+    )
+    session = make_session(repo, settings, fake)
+
+    turn = await session.send("Oi")
+
+    assert turn.replies == ["Não consegui consultar agora."]
+    [blocked] = [e for e in turn.events if e.type == "guardrail_blocked"]
+    assert blocked.data["tool"] == "Agent"
+    assert not [e for e in turn.events if e.type == "delegation"]
+
+
 async def test_the_cli_footer_does_not_leak_into_the_specialist_result(repo, settings):
     footer = (
         "\nagentId: a1b2c3d4 (use SendMessage with to: 'a1b2c3d4' to continue this agent)\n"
@@ -565,6 +599,52 @@ async def test_a_turn_that_times_out_does_not_leave_a_stale_client_behind(repo, 
 
     assert turn.replies == ["Resposta certa."]
     assert fake.connects == 2
+
+
+async def test_a_turn_cut_short_still_traces_the_tokens_the_responses_showed(repo, settings):
+    fake = FakeClaude(
+        [
+            [Says("Vou verificar.", usage=usage(100, 20)), Hangs()],
+            [Says("Vou verificar.", usage=usage(50, 10)), Raises(CLIConnectionError("o CLI caiu"))],
+        ]
+    )
+    session = make_session(repo, settings, fake)
+
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(session.send("Oi"), 0.2)
+    with pytest.raises(AgentRuntimeError):
+        await session.send("Oi de novo")
+
+    # Sem `ResultMessage` não há custo do SDK: fica o da tabela (ADR-0019).
+    used = [e for e in session.events if e.type == "usage"]
+    assert [(e.agent, e.data["model"], e.data["input_tokens"], e.data["output_tokens"]) for e in used] == [
+        ("reception", HAIKU, 100, 20),
+        ("reception", HAIKU, 50, 10),
+    ]
+    assert all(e.data["cost_usd"] == e.data["price_table_cost_usd"] for e in used)
+
+
+class SlowToDisconnect(FakeClaude):
+    """Um CLI que leva um instante para encerrar: o `disconnect` passa por um ponto de cancelamento."""
+
+    disconnected = False
+
+    async def disconnect(self) -> None:
+        await anyio.sleep(0.01)
+        self.disconnected = True
+        await super().disconnect()
+
+
+async def test_a_turn_cancelled_by_an_anyio_scope_still_disconnects_the_cli(repo, settings):
+    # Num cancel scope do anyio (o da API, por exemplo) todo `await` dentro dele é cancelado de
+    # novo; sem proteção, o disconnect não termina e o processo do CLI fica órfão.
+    fake = SlowToDisconnect([[Hangs()]])
+    session = make_session(repo, settings, fake)
+
+    with anyio.move_on_after(0.2):
+        await session.send("Oi")
+
+    assert fake.disconnected
 
 
 async def test_after_a_turn_the_sdk_ended_with_error_the_next_turn_reconnects(repo, settings):
