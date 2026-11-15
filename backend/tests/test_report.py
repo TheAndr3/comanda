@@ -121,6 +121,24 @@ def test_quota_consumed_is_summed_per_window_period_when_the_window_renews_mid_r
     assert (use.first, use.last, use.renewed, use.readings) == (0.10, 0.12, True, 4)
 
 
+def test_a_reading_without_a_reset_time_is_not_a_period_of_its_own():
+    results = [
+        result(
+            "A",
+            quota=(
+                QuotaReading("five_hour", "allowed", 0.10, 1000),
+                # O CLI não informou quando a janela renova: continua no período em curso.
+                QuotaReading("five_hour", "allowed", 0.25, None),
+                QuotaReading("five_hour", "allowed", 0.40, 1000),
+            ),
+        ),
+    ]
+
+    use = summarize_quota(results)["five_hour"]
+
+    assert (use.consumed, use.renewed) == (0.3, False)
+
+
 def test_quota_without_a_utilization_fraction_reports_none_instead_of_a_number():
     results = [result("A", quota=(QuotaReading("seven_day", "allowed_warning"),))]
 

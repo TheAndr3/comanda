@@ -153,10 +153,15 @@ def summarize_quota(results: Sequence[ScenarioResult]) -> dict[str, QuotaUse]:
 
     summary: dict[str, QuotaUse] = {}
     for window, readings in sorted(by_window.items()):
+        # Uma leitura sem `resets_at` não é um período à parte: fica no período em curso (ou no
+        # primeiro conhecido, se vier antes de todos).
+        known = [r.resets_at for r in readings if r.resets_at is not None]
+        period = known[0] if known else None
         periods: dict[int | None, list[float]] = defaultdict(list)
         for reading in readings:
+            period = reading.resets_at if reading.resets_at is not None else period
             if reading.utilization is not None:
-                periods[reading.resets_at].append(reading.utilization)
+                periods[period].append(reading.utilization)
         values = [u for r in readings if (u := r.utilization) is not None]
         consumed = round(sum(p[-1] - p[0] for p in periods.values()), 4) if values else None
         summary[window] = QuotaUse(
@@ -165,7 +170,7 @@ def summarize_quota(results: Sequence[ScenarioResult]) -> dict[str, QuotaUse]:
             last=values[-1] if values else None,
             consumed=consumed,
             status=readings[-1].status,
-            renewed=len({r.resets_at for r in readings}) > 1,
+            renewed=len(set(known)) > 1,
         )
     return summary
 
