@@ -16,7 +16,7 @@ Orquestração multi-agente para atendimento ao cliente de delivery, construída
 - `backend/`: pacote Python `comanda` (domain, tools, agents, runtime, evals, api).
 - `web/`: painel em Next.js.
 - `evals/`: cenários em YAML e resultados versionados.
-- `docs/`: `PRD.md`, `adr/`, `agents/` e `architecture.md`.
+- `docs/`: `PRD.md`, `adr/` e `agents/`.
 
 ## Agent skills
 
