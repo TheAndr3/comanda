@@ -51,11 +51,16 @@ def select_scenarios(scenarios: list[Scenario], subset: Sequence[str] | None) ->
     return [s for s in scenarios if s.id in wanted or s.customer_id in wanted]
 
 
-def current_commit(root: Path = REPO_ROOT) -> str:
-    """O commit do repositório, com `-dirty` se há mudança em arquivo rastreado; `unknown` sem git.
+# Relatórios de rodadas ainda não commitados: não tornam o código da rodada seguinte `-dirty`.
+RESULTS_PATH = "evals/results"
 
-    Arquivo não rastreado não conta: o relatório de uma rodada ainda não commitado deixaria
-    todos os relatórios seguintes marcados como `-dirty` sem motivo.
+
+def current_commit(root: Path = REPO_ROOT) -> str:
+    """O commit do repositório, com `-dirty` se há mudança fora de commit; `unknown` sem git.
+
+    Conta também arquivo novo ainda não adicionado, que muda o código da rodada. Só os
+    relatórios em `RESULTS_PATH` ficam de fora: o de uma rodada ainda não commitado deixaria
+    todos os seguintes marcados como `-dirty` sem motivo. Arquivos ignorados pelo git não contam.
     """
     git = ["git", "-C", str(root)]
     try:
@@ -63,7 +68,7 @@ def current_commit(root: Path = REPO_ROOT) -> str:
             [*git, "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True
         )
         status = subprocess.run(
-            [*git, "status", "--porcelain", "--untracked-files=no"],
+            [*git, "status", "--porcelain", "--", ".", f":(exclude){RESULTS_PATH}"],
             capture_output=True,
             text=True,
             check=True,

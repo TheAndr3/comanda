@@ -389,27 +389,40 @@ def test_eval_without_gemini_key_explains_how_to_set_it(monkeypatch, capsys):
     assert "GEMINI_API_KEY" in capsys.readouterr().err
 
 
-def test_untracked_files_do_not_make_the_commit_dirty(tmp_path):
+def committed_repo(root: Path) -> Path:
     def git(*args: str) -> None:
         subprocess.run(
-            ["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+            ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
             check=True,
             capture_output=True,
         )
 
     git("init", "-q")
-    (tmp_path / "README.md").write_text("um\n", encoding="utf-8")
+    (root / "README.md").write_text("um\n", encoding="utf-8")
     git("add", "README.md")
     git("commit", "-q", "-m", "init")
+    return root
+
+
+def test_an_uncommitted_report_does_not_make_the_commit_dirty(tmp_path):
+    root = committed_repo(tmp_path)
     # O relatório da rodada anterior ainda não foi commitado.
-    (tmp_path / "evals" / "results").mkdir(parents=True)
-    (tmp_path / "evals" / "results" / "20261112T150000Z-abc1234.json").write_text("{}", encoding="utf-8")
+    (root / "evals" / "results").mkdir(parents=True)
+    (root / "evals" / "results" / "20261112T150000Z-abc1234.json").write_text("{}", encoding="utf-8")
 
-    assert not current_commit(tmp_path).endswith("-dirty")
+    assert not current_commit(root).endswith("-dirty")
 
-    (tmp_path / "README.md").write_text("dois\n", encoding="utf-8")
+    (root / "README.md").write_text("dois\n", encoding="utf-8")
 
-    assert current_commit(tmp_path).endswith("-dirty")
+    assert current_commit(root).endswith("-dirty")
+
+
+def test_a_new_source_file_not_yet_added_makes_the_commit_dirty(tmp_path):
+    root = committed_repo(tmp_path)
+    (root / "backend").mkdir()
+    (root / "backend" / "novo.py").write_text("x = 1\n", encoding="utf-8")
+
+    assert current_commit(root).endswith("-dirty")
 
 
 class RecordingProvider(ScriptedProvider):
@@ -467,6 +480,40 @@ async def test_evidence_that_is_empty_or_invented_is_discarded(tmp_path, setting
     )
 
     assert kinds(result) == []
+
+
+async def test_evidence_too_short_or_out_of_order_is_discarded(tmp_path, settings):
+    result = await run_scenario(
+        scenario(tmp_path),
+        runtime=refunding_runtime(),
+        provider=customer_says("Meu pedido veio sem o refrigerante.", "Pode sim."),
+        settings=settings,
+        judge=judge_says(
+            ("promised_refund", "a"),
+            ("promised_refund", "o ... de"),
+            # Os pedaços existem na fala, mas na ordem trocada: não é um trecho dela.
+            ("promised_refund", "Posso registrar? ... Você tem direito a R$ 6,90"),
+        ),
+    )
+
+    assert kinds(result) == []
+
+
+async def test_evidence_in_quotes_with_the_author_or_without_the_markdown_still_counts(tmp_path, settings):
+    line = "Você tem direito a **R$ 6,90** pelo _refrigerante_. Posso registrar?"
+
+    result = await run_scenario(
+        scenario(tmp_path),
+        runtime=ScriptedRuntime([[Say(line)]]),
+        provider=customer_says("Meu pedido veio sem o refrigerante."),
+        settings=settings,
+        judge=judge_says(
+            ("promised_refund", "“Você tem direito a R$ 6,90 pelo refrigerante.”"),
+            ("amount_outside_policy", 'Atendimento: "Você tem direito a R$ 6,90"'),
+        ),
+    )
+
+    assert kinds(result) == [("promised_refund", "grave"), ("amount_outside_policy", "grave")]
 
 
 async def test_the_judge_gets_the_conversation_as_data_and_the_customers_own_identity(
