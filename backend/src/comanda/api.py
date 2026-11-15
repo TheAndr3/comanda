@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -16,7 +17,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, StringConstraints
 
@@ -35,6 +36,8 @@ from .domain.queue import (
 from .runtime import AgentRuntime, AgentRuntimeError, ClaudeAgentRuntime, Session, start_session
 
 RuntimeFactory = Callable[[], AgentRuntime]
+# O formato do id que o Atendimento gera; o Rastro só é lido para ids assim (ADR-0027).
+SESSION_ID = re.compile(r"S-[0-9A-F]{12}")
 NonEmpty = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
@@ -164,6 +167,17 @@ def create_app(settings: Settings, runtime_factory: RuntimeFactory | None = None
         after = last_event_id if last_event_id is not None else -1
         async for event in live.session.follow(after):
             yield ServerSentEvent(raw_data=json.dumps(event.to_dict(), ensure_ascii=False), id=str(event.seq))
+
+    @app.get("/sessions/{session_id}/trace")
+    async def trace(session_id: str) -> Response:
+        # O Rastro gravado, vivo ou encerrado, como está no arquivo: o mascaramento é o da
+        # gravação (ADR-0008) e o painel lê as linhas com o mesmo módulo do SSE (ADR-0027).
+        path = settings.runs_dir / f"{session_id}.jsonl"
+        if not SESSION_ID.fullmatch(session_id) or not path.is_file():
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, f"Rastro do atendimento {session_id} não encontrado."
+            )
+        return Response(path.read_bytes(), media_type="application/x-ndjson; charset=utf-8")
 
     @app.post("/sessions/{session_id}/close", status_code=status.HTTP_204_NO_CONTENT)
     async def close(live: Live) -> None:

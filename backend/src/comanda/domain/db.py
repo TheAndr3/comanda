@@ -81,7 +81,8 @@ CREATE TABLE IF NOT EXISTS refunds (
     created_at       TEXT NOT NULL,
     decided_by       TEXT,
     decided_at       TEXT,
-    rejection_reason TEXT
+    rejection_reason TEXT,
+    session_id       TEXT
 );
 CREATE TABLE IF NOT EXISTS tickets (
     id          TEXT PRIMARY KEY,
@@ -90,7 +91,8 @@ CREATE TABLE IF NOT EXISTS tickets (
     priority    TEXT NOT NULL,
     summary     TEXT NOT NULL,
     created_at  TEXT NOT NULL,
-    status      TEXT NOT NULL
+    status      TEXT NOT NULL,
+    session_id  TEXT
 );
 -- O valor sai da regra (ADR-0001) e ninguém o altera depois, nem o atendente humano (ADR-0007).
 CREATE TRIGGER IF NOT EXISTS refunds_amount_immutable
@@ -298,13 +300,14 @@ class Repository:
             decided_by=row["decided_by"],
             decided_at=_dt(row["decided_at"]),
             rejection_reason=row["rejection_reason"],
+            session_id=row["session_id"],
         )
 
     def insert_refund(self, r: Refund) -> None:
         with self.connect() as conn:
             conn.execute(
                 "INSERT INTO refunds (id, order_id, customer_id, amount_cents, issue, status, rule_id, "
-                "item_ids, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "item_ids, created_at, session_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     r.id,
                     r.order_id,
@@ -315,6 +318,7 @@ class Repository:
                     r.rule_id,
                     json.dumps(list(r.item_ids)),
                     r.created_at.isoformat(),
+                    r.session_id,
                 ),
             )
 
@@ -375,8 +379,8 @@ class Repository:
     def insert_ticket(self, t: Ticket) -> None:
         with self.connect() as conn:
             conn.execute(
-                "INSERT INTO tickets (id, customer_id, order_id, priority, summary, created_at, status) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO tickets (id, customer_id, order_id, priority, summary, created_at, status, "
+                "session_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     t.id,
                     t.customer_id,
@@ -385,6 +389,7 @@ class Repository:
                     t.summary,
                     t.created_at.isoformat(),
                     t.status.value,
+                    t.session_id,
                 ),
             )
 
@@ -398,6 +403,7 @@ class Repository:
             summary=row["summary"],
             created_at=datetime.fromisoformat(row["created_at"]),
             status=TicketStatus(row["status"]),
+            session_id=row["session_id"],
         )
 
     def get_ticket(self, ticket_id: str) -> Ticket | None:

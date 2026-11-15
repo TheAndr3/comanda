@@ -42,7 +42,7 @@ class Session:
             raise ValueError(f"Cliente {customer_id} não encontrado.")
         self.id = f"S-{uuid.uuid4().hex[:12].upper()}"
         self._mask = PersonalDataMask(customer)
-        self._ctx = ToolContext(repo=repo, settings=settings, customer_id=customer_id)
+        self._ctx = ToolContext(repo=repo, settings=settings, customer_id=customer_id, session_id=self.id)
         self._runtime = runtime
         self._turn: Turn | None = None
         # O turno mais recente, também quando o runtime falhou no meio dele.
