@@ -1,0 +1,119 @@
+:root {
+  --surface-light: #faf7f4;
+  --surface-dark: #141210;
+  --panel-light: #ffffff;
+  --panel-dark: #1d1a17;
+  --sunken-light: #f2ede8;
+  --sunken-dark: #272320;
+  --text-light: #1f1a16;
+  --text-dark: #efe9e3;
+  --muted-light: #6b6058;
+  --muted-dark: #a99d93;
+  --line-light: #e4dcd4;
+  --line-dark: #3a332e;
+  --accent-light: #c2410c;
+  --accent-dark: #fb923c;
+  --accent-text-light: #ffffff;
+  --accent-text-dark: #1c0d03;
+  --ok-light: #15803d;
+  --ok-dark: #4ade80;
+  --warn-light: #b45309;
+  --warn-dark: #fbbf24;
+  --danger-light: #b91c1c;
+  --danger-dark: #f87171;
+  --danger-soft-light: #fdecec;
+  --danger-soft-dark: #3a1d1b;
+  --info-light: #1d4ed8;
+  --info-dark: #93c5fd;
+
+  --surface: var(--surface-light);
+  --panel: var(--panel-light);
+  --sunken: var(--sunken-light);
+  --text: var(--text-light);
+  --muted: var(--muted-light);
+  --line: var(--line-light);
+  --accent: var(--accent-light);
+  --accent-text: var(--accent-text-light);
+  --ok: var(--ok-light);
+  --warn: var(--warn-light);
+  --danger: var(--danger-light);
+  --danger-soft: var(--danger-soft-light);
+  --info: var(--info-light);
+
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+  --radius: 10px;
+
+  color-scheme: light dark;
+  accent-color: var(--accent);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: var(--surface-dark);
+    --panel: var(--panel-dark);
+    --sunken: var(--sunken-dark);
+    --text: var(--text-dark);
+    --muted: var(--muted-dark);
+    --line: var(--line-dark);
+    --accent: var(--accent-dark);
+    --accent-text: var(--accent-text-dark);
+    --ok: var(--ok-dark);
+    --warn: var(--warn-dark);
+    --danger: var(--danger-dark);
+    --danger-soft: var(--danger-soft-dark);
+    --info: var(--info-dark);
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  block-size: 100%;
+}
+
+body {
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+code,
+pre {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+}
+
+button,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button:disabled,
+select:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
