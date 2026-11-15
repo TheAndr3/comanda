@@ -26,6 +26,10 @@ class Settings:
         default_factory=lambda: Path(os.getenv("COMANDA_DB", PROJECT_ROOT / "data" / "comanda.db"))
     )
     runs_dir: Path = field(default_factory=lambda: Path(os.getenv("COMANDA_RUNS", PROJECT_ROOT / "runs")))
+    # Rastros escolhidos para o replay público, versionados com o painel (ADR-0012).
+    replays_dir: Path = field(
+        default_factory=lambda: Path(os.getenv("COMANDA_REPLAYS", REPO_ROOT / "web" / "public" / "replays"))
+    )
     # Reembolsos acima deste valor (em centavos) exigem aprovação humana.
     auto_refund_limit_cents: int = field(
         default_factory=lambda: _env_int("COMANDA_AUTO_REFUND_LIMIT_CENTS", 8000)

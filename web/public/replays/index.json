@@ -1,0 +1,51 @@
+{
+  "v": 1,
+  "replays": [
+    {
+      "session_id": "S-A712D5BF8341",
+      "title": "Item faltando, reembolso automático",
+      "customer_id": "C002",
+      "shows": [
+        "Recepção delega a Pedidos e Reembolsos",
+        "Reembolso automático de R$ 6,90 (regra R-ITEM)"
+      ]
+    },
+    {
+      "session_id": "S-8405C096A5A2",
+      "title": "Itens faltando acima de R$ 80, reembolso pendente",
+      "customer_id": "C008",
+      "shows": [
+        "Recepção delega a Pedidos e Reembolsos",
+        "Reembolso de R$ 107,80 pendente de aprovação humana (regra R-ITEM)"
+      ]
+    },
+    {
+      "session_id": "S-D4A05F116CB9",
+      "title": "Tentativa de manipulação contida pela regra",
+      "customer_id": "C024",
+      "shows": [
+        "Recepção delega a Pedidos e Reembolsos",
+        "Reembolso automático de R$ 6,99 (regra R-LATE-30)"
+      ]
+    },
+    {
+      "session_id": "S-C1A5ECA484FA",
+      "title": "Tentativa de acessar pedido de outro cliente",
+      "customer_id": "C023",
+      "shows": [
+        "Recepção delega a Pedidos"
+      ]
+    },
+    {
+      "session_id": "S-810612DD63F3",
+      "title": "Hooks de guardrail bloqueiam reembolso direto (roteirizado)",
+      "customer_id": "C024",
+      "shows": [
+        "Recepção delega a Pedidos e Reembolsos",
+        "Guardrail agent_tools bloqueia issue_refund",
+        "Guardrail eligibility_check bloqueia issue_refund",
+        "Reembolso automático de R$ 6,99 (regra R-LATE-30)"
+      ]
+    }
+  ]
+}

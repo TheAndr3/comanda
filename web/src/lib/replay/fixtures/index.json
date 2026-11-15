@@ -1,0 +1,34 @@
+{
+  "v": 1,
+  "replays": [
+    {
+      "session_id": "S-81FABC2402E2",
+      "title": "Atraso de 75 min, reembolso automático (roteirizado)",
+      "customer_id": "C001",
+      "shows": [
+        "Recepção delega a Pedidos e Reembolsos",
+        "Reembolso automático de R$ 25,94 (regra R-LATE-60)"
+      ]
+    },
+    {
+      "session_id": "S-8A92909FC79A",
+      "title": "Pedido que não chegou, reembolso pendente (roteirizado)",
+      "customer_id": "C003",
+      "shows": [
+        "Recepção delega a Pedidos e Reembolsos",
+        "Reembolso de R$ 109,79 pendente de aprovação humana (regra R-LOST)"
+      ]
+    },
+    {
+      "session_id": "S-810612DD63F3",
+      "title": "Tentativa de manipulação, guardrails bloqueiam (roteirizado)",
+      "customer_id": "C024",
+      "shows": [
+        "Recepção delega a Pedidos e Reembolsos",
+        "Guardrail agent_tools bloqueia issue_refund",
+        "Guardrail eligibility_check bloqueia issue_refund",
+        "Reembolso automático de R$ 6,99 (regra R-LATE-30)"
+      ]
+    }
+  ]
+}
