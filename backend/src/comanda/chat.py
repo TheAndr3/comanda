@@ -95,11 +95,18 @@ def usage_summary(session: Session) -> list[str]:
 
 
 def _tolerate_unprintable_text() -> None:
-    """O console do Windows (cp1252) não imprime tudo o que o modelo escreve, emoji por exemplo."""
+    """O console do Windows (cp1252) não imprime tudo o que o modelo escreve, emoji por exemplo.
+
+    A entrada redirecionada (`comanda chat < falas.txt`) é lida como UTF-8: no Windows ela viria
+    em cp1252 e deformaria a fala do cliente ou levantaria `UnicodeDecodeError`.
+    """
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is not None:
             reconfigure(errors="replace")
+    reconfigure_in = getattr(sys.stdin, "reconfigure", None)
+    if reconfigure_in is not None and not sys.stdin.isatty():
+        reconfigure_in(encoding="utf-8", errors="replace")
 
 
 async def _read_line(prompt: str) -> str:
@@ -167,6 +174,12 @@ async def run_chat(
                 break
             try:
                 turn = await session.send(line)
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                # Ctrl+C no meio do turno: mostra o que a Recepção já disse e encerra como na espera,
+                # com o resumo de tokens e o caminho do Rastro.
+                _show_turn(session.last_turn, show_trace)
+                print("Turno interrompido.", file=sys.stderr)
+                break
             except AgentRuntimeError as exc:
                 _show_turn(session.last_turn, show_trace)  # o que a Recepção disse antes de falhar
                 print(f"O runtime de agentes falhou: {exc}", file=sys.stderr)
@@ -180,11 +193,14 @@ async def run_chat(
                 break
             _show_turn(turn, show_trace)
     finally:
-        session.close()  # primeiro: o Rastro registra o fim mesmo que o runtime falhe ao fechar
         try:
-            await runtime.aclose()
-        except Exception as exc:
-            print(f"Não consegui encerrar o runtime de agentes: {exc}", file=sys.stderr)
+            session.close()  # primeiro: o Rastro registra o fim mesmo que o runtime falhe ao fechar
+        finally:
+            # Mesmo que gravar o fim falhe: o processo do CLI não pode ficar órfão.
+            try:
+                await runtime.aclose()
+            except Exception as exc:
+                print(f"Não consegui encerrar o runtime de agentes: {exc}", file=sys.stderr)
     summary = usage_summary(session)
     if summary:
         print("\nTokens por modelo:")

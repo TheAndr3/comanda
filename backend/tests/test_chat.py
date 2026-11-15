@@ -7,6 +7,8 @@ import json
 import sys
 import threading
 
+import pytest
+
 from comanda.chat import describe, run_chat
 from comanda.runtime import (
     AgentRuntimeError,
@@ -14,6 +16,7 @@ from comanda.runtime import (
     Return,
     Say,
     ScriptedRuntime,
+    Session,
     ToolCall,
     Usage,
     start_session,
@@ -73,6 +76,21 @@ async def test_reply_with_characters_the_console_cannot_print_does_not_crash_the
     assert status == 0
 
 
+async def test_redirected_utf8_input_reaches_the_reception_intact_on_a_cp1252_system(
+    repo, settings, monkeypatch
+):
+    # `comanda chat < falas.txt` no Windows: o stdin redirecionado vem em cp1252 por padrão.
+    stdin = io.TextIOWrapper(io.BytesIO("Não chegou a coxinha, é sério\n".encode()), encoding="cp1252")
+    monkeypatch.setattr(sys, "stdin", stdin)
+
+    status = await run_chat(repo, settings, "C001", runtime=ScriptedRuntime([[Say("Entendi.")]]))
+
+    assert status == 0
+    [trace] = list(settings.runs_dir.glob("*.jsonl"))
+    said = [json.loads(line)["data"] for line in trace.read_text(encoding="utf-8").splitlines()]
+    assert {"text": "Não chegou a coxinha, é sério"} in said
+
+
 async def test_every_trace_line_is_plain_cp1252(repo, settings):
     session = start_session(repo, settings, "C001", ScriptedRuntime(SCRIPT))
     turn = await session.send("Oi")
@@ -101,6 +119,52 @@ async def test_ctrl_c_while_waiting_for_the_customer_still_closes_the_session(
     assert "Rastro em " in out
     [trace] = list(settings.runs_dir.glob("*.jsonl"))
     assert trace_types(trace)[-1] == "session_ended"
+
+
+class SpeaksThenHangs:
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def respond(self, message, host):
+        host.say("Vou verificar seu pedido.")
+        host.record_usage(Usage("reception", "haiku", input_tokens=10, output_tokens=5, cost_usd=0.001))
+        await asyncio.sleep(30)
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+async def test_ctrl_c_during_a_turn_shows_the_partial_reply_the_tokens_and_the_trace(
+    repo, settings, monkeypatch, capsys
+):
+    feed(monkeypatch, "Cadê meu pedido?")
+    runtime = SpeaksThenHangs()
+
+    task = asyncio.create_task(run_chat(repo, settings, "C001", runtime=runtime))
+    await asyncio.sleep(0.3)
+    task.cancel()  # é o que `asyncio.run` faz com o Ctrl+C
+    status = await task
+
+    out = capsys.readouterr().out
+    assert status == 0
+    assert "Vou verificar seu pedido." in out
+    assert "Tokens por modelo:" in out
+    assert "Rastro em " in out
+    assert runtime.closed
+
+
+async def test_the_runtime_is_closed_even_if_closing_the_session_fails(repo, settings, monkeypatch):
+    feed(monkeypatch, "sair")
+    runtime = SpeaksThenHangs()
+
+    def disk_full(self) -> None:
+        raise OSError("disco cheio")
+
+    monkeypatch.setattr(Session, "close", disk_full)
+
+    with pytest.raises(OSError, match="disco cheio"):
+        await run_chat(repo, settings, "C001", runtime=runtime)
+    assert runtime.closed
 
 
 class SpeaksThenFails:
