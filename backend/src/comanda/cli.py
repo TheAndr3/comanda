@@ -3,7 +3,7 @@
 `comanda seed` recria o banco; `comanda chat --customer <id>` abre um atendimento pelo
 terminal; `comanda queue ...` é a Fila do atendente humano (ADR-0007); `comanda eval` roda
 os cenários de avaliação com o cliente simulado (ADR-0015); `comanda serve` sobe a API do
-painel (ADR-0005).
+painel (ADR-0005); `comanda export-replay` copia atendimentos escolhidos para o replay (ADR-0012).
 """
 
 from __future__ import annotations
@@ -15,14 +15,16 @@ import sys
 from collections.abc import Sequence
 
 from .chat import run_chat
-from .config import get_settings
+from .config import Settings, get_settings
 from .data.seed import seed_database
 from .domain.db import Repository
 from .domain.policies import format_brl
 from .domain.queue import QueueError, approve_refund, list_queue, reject_refund, resolve_ticket
 from .evals import Judge, ProviderError, provider_from_settings
 from .evaluate import run_eval
+from .replay import ReplayError, export_replays
 from .runtime import ClaudeAgentRuntime
+from .runtime.masking import CustomersMask
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -60,6 +62,14 @@ def _parser() -> argparse.ArgumentParser:
     serve = commands.add_parser("serve", help="Sobe a API do painel com o runtime do Claude Agent SDK.")
     serve.add_argument("--host", default="127.0.0.1", help="Endereço (padrão: só esta máquina).")
     serve.add_argument("--port", type=int, default=8000)
+
+    export = commands.add_parser(
+        "export-replay", help="Copia atendimentos escolhidos, já mascarados, para o replay do painel."
+    )
+    export.add_argument("session_ids", nargs="+", metavar="SESSION_ID", help="Por exemplo S-7F6D91F123ED.")
+    export.add_argument(
+        "--title", help="Título curto na tela de escolha (só com um atendimento; padrão: 1ª fala do cliente)."
+    )
     return parser
 
 
@@ -92,6 +102,20 @@ def _run_queue(repo: Repository, args: argparse.Namespace) -> None:
     elif args.action == "resolve":
         resolve_ticket(repo, args.ticket_id)
         print(f"Ticket {args.ticket_id} resolvido.")
+
+
+def _export_replay(repo: Repository, settings: Settings, args: argparse.Namespace) -> int:
+    try:
+        entries = export_replays(
+            args.session_ids, settings.runs_dir, settings.replays_dir, CustomersMask.of(repo), args.title
+        )
+    except ReplayError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    for entry in entries:
+        print(f"{entry['session_id']}  {entry['title']}")
+    print(f"Replays em {settings.replays_dir}.")
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -129,6 +153,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         # Um SSE aberto nunca termina sozinho; sem o limite, Ctrl+C esperaria o painel fechar.
         uvicorn.run(create_app(settings), host=args.host, port=args.port, timeout_graceful_shutdown=3)
         return 0
+    if args.command == "export-replay":
+        return _export_replay(repo, settings, args)
     try:
         _run_queue(repo, args)
     except QueueError as exc:

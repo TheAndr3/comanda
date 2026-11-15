@@ -82,3 +82,7 @@ jobs:
       # Erros de CSS Modules e de renderização só aparecem no build.
       - name: Build
         run: pnpm build
+
+      # O site público: export estático só com os replays (ADR-0029).
+      - name: Build do replay estático
+        run: pnpm build:replay

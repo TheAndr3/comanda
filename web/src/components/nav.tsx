@@ -6,6 +6,7 @@ import panel from "./panel.module.css";
 const SCREENS = [
   { key: "live", href: "/", label: "Atendimento" },
   { key: "queue", href: "/queue", label: "Fila" },
+  { key: "replay", href: "/replay", label: "Replay" },
 ] as const;
 
 export type Screen = (typeof SCREENS)[number]["key"];
