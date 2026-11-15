@@ -10,9 +10,11 @@
 /** The schema version this panel understands. */
 export const SCHEMA_VERSION = 1;
 
-export type Agent = "reception" | "orders" | "refunds";
-export type Specialist = Exclude<Agent, "reception">;
-export type Actor = Agent | "customer" | "system";
+/**
+ * Who acted: `reception`, `orders`, `refunds`, `customer` or `system` in schema 1. Kept as a
+ * string, not a union, because the line comes from the network and is shown as it came.
+ */
+export type Actor = string;
 
 interface StepBase {
   seq: number;
@@ -187,7 +189,7 @@ function parseEnvelope(line: string): Envelope {
     throw new LineError("seq, ts ou agent ausente");
   }
   if (typeof type !== "string" || !isRecord(data)) throw new LineError("type ou data ausente");
-  return { seq, ts, agent: agent as Actor, type, data };
+  return { seq, ts, agent, type, data };
 }
 
 function applyEvent(view: TraceView, event: RawEvent): TraceView {

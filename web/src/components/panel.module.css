@@ -272,6 +272,10 @@
   background: var(--warn);
 }
 
+.connection[data-status="lost"]::before {
+  background: var(--danger);
+}
+
 .summary {
   display: grid;
   gap: 8px;

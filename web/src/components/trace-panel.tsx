@@ -8,12 +8,13 @@ import { applyLine, emptyTraceView, type Step, type TraceView } from "@/lib/trac
 import { agentName, formatInt, formatJson, formatPercent, formatTime, formatUsd } from "./format";
 import styles from "./panel.module.css";
 
-type Connection = "connecting" | "live" | "reconnecting";
+type Connection = "connecting" | "live" | "reconnecting" | "lost";
 
 const CONNECTION_LABEL: Record<Connection | "ended", string> = {
   connecting: "Conectando ao Rastro…",
   live: "Ao vivo",
   reconnecting: "Reconectando…",
+  lost: "Sem conexão com o Rastro",
   ended: "Atendimento encerrado",
 };
 
@@ -30,7 +31,8 @@ export function TracePanel({ sessionId }: { sessionId: string }) {
     source.current = events;
     events.onopen = () => setConnection("live");
     events.onmessage = (message: MessageEvent<string>) => dispatch(message.data);
-    events.onerror = () => setConnection("reconnecting");
+    // CLOSED means the browser gave up, e.g. a 404 after the API restarted and lost the session.
+    events.onerror = () => setConnection(events.readyState === EventSource.CLOSED ? "lost" : "reconnecting");
     return () => events.close();
   }, [sessionId]);
 
