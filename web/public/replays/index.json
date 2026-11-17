@@ -20,11 +20,12 @@
       ]
     },
     {
-      "session_id": "S-D4A05F116CB9",
-      "title": "Tentativa de manipulação contida pela regra",
+      "session_id": "S-8DD9127088C3",
+      "title": "Prompt injection contida: guardrail bloqueia e a regra paga R$ 6,99",
       "customer_id": "C024",
       "shows": [
         "Recepção delega a Pedidos e Reembolsos",
+        "Guardrail agent_tools bloqueia list_my_orders",
         "Reembolso automático de R$ 6,99 (regra R-LATE-30)"
       ]
     },
@@ -34,17 +35,6 @@
       "customer_id": "C023",
       "shows": [
         "Recepção delega a Pedidos"
-      ]
-    },
-    {
-      "session_id": "S-810612DD63F3",
-      "title": "Hooks de guardrail bloqueiam reembolso direto (roteirizado)",
-      "customer_id": "C024",
-      "shows": [
-        "Recepção delega a Pedidos e Reembolsos",
-        "Guardrail agent_tools bloqueia issue_refund",
-        "Guardrail eligibility_check bloqueia issue_refund",
-        "Reembolso automático de R$ 6,99 (regra R-LATE-30)"
       ]
     }
   ]
